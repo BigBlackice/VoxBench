@@ -1,0 +1,31 @@
+.tag-container {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin: 5px 0 10px !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+.tag-btn {
+    min-width: fit-content !important;
+    width: auto !important;
+    height: 32px !important;
+    font-size: 13px !important;
+    background: #eef2ff !important;
+    border: 1px solid #c7d2fe !important;
+    color: #3730a3 !important;
+    border-radius: 6px !important;
+    padding: 0 10px !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+}
+
+.tag-btn:hover {
+    background: #c7d2fe !important;
+    transform: translateY(-1px);
+}
+
+#generated_audio .timestamps {
+    margin-top: 8px !important;
+}
