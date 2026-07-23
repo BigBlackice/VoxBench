@@ -38,3 +38,6 @@ dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local planning notes
+todo.md

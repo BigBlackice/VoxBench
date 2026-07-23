@@ -1,0 +1,5 @@
+# Base application dependencies
+-r requirements.txt
+
+# Optional helpers for planned audio processing and export features
+pydub==0.25.1
