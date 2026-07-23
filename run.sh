@@ -17,4 +17,4 @@ fi
 
 echo "Checking project dependencies..."
 "$VENV_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
-exec "$VENV_PYTHON" gradio_tts_nano_app.py
+exec "$VENV_PYTHON" app.py

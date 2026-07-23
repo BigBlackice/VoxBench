@@ -16,5 +16,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "Dependency installation failed."
 }
 
-& $venvPython gradio_tts_nano_app.py
+& $venvPython app.py
 exit $LASTEXITCODE
