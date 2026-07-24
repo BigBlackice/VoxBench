@@ -13,6 +13,13 @@ sequential chunks.
 The virtual environment and downloaded model cache are intentionally local and
 excluded from Git. Each operating system creates its own compatible copies.
 
+## Reference samples
+
+Uploaded and recorded reference clips are automatically copied into the local
+`samples/` folder. Saved samples can be selected again from the WebUI without
+uploading them a second time. The folder is excluded from Git because reference
+recordings may contain private voice data.
+
 ### Optional audio dependencies
 
 The base WebUI uses `requirements.txt`. Helpers for the planned audio-processing

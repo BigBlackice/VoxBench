@@ -7,6 +7,9 @@ env/
 .cache/
 .huggingface/
 
+# Private reference recordings
+samples/
+
 # Python-generated files
 __pycache__/
 *.py[cod]

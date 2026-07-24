@@ -1,6 +1,6 @@
 import os
 
-from webui.config import MODEL_CACHE_DIR
+from webui.config import MODEL_CACHE_DIR, PROJECT_DIR
 
 
 # Set the cache location before importing PyTorch, Gradio, or Hugging Face.
@@ -37,6 +37,7 @@ def main() -> None:
         inbrowser=True,
         share=False,
         css=CUSTOM_CSS,
+        allowed_paths=[str(PROJECT_DIR)],
     )
 
 

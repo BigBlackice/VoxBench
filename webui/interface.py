@@ -3,7 +3,11 @@ import gradio as gr
 from webui.audio_processing import join_audio_chunks
 from webui.config import EVENT_TAGS, read_asset
 from webui.model import generate_audio_chunk, load_model, set_seed
-from webui.storage import load_text_file
+from webui.storage import (
+    list_reference_samples,
+    load_text_file,
+    save_reference_sample,
+)
 from webui.text_processing import split_text
 
 
@@ -13,6 +17,13 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
 
     def load_nano_model():
         return load_model(device, device_label)
+
+    def persist_reference_sample(file_path):
+        saved_path = save_reference_sample(file_path)
+        return gr.update(
+            choices=list_reference_samples(),
+            value=str(saved_path) if saved_path else None,
+        )
 
     def generate(
         model,
@@ -113,6 +124,11 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                     type="filepath",
                     label="Reference audio (optional)",
                 )
+                saved_reference = gr.Dropdown(
+                    choices=list_reference_samples(),
+                    label="Saved reference samples",
+                    allow_custom_value=False,
+                )
 
                 with gr.Accordion("Advanced options", open=False):
                     seed_num = gr.Number(value=0, label="Random seed (0 for random)")
@@ -160,6 +176,16 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
 
         demo.load(fn=load_nano_model, outputs=model_state)
         text_file.change(fn=load_text_file, inputs=text_file, outputs=text)
+        reference_audio.input(
+            fn=persist_reference_sample,
+            inputs=reference_audio,
+            outputs=saved_reference,
+        )
+        saved_reference.input(
+            fn=lambda file_path: file_path,
+            inputs=saved_reference,
+            outputs=reference_audio,
+        )
         run_button.click(
             fn=generate,
             inputs=[
