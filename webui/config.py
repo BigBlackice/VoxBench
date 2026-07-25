@@ -5,6 +5,7 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = PROJECT_DIR / "assets"
 MODEL_CACHE_DIR = PROJECT_DIR / ".cache" / "huggingface"
 SAMPLES_DIR = PROJECT_DIR / "samples"
+OUTPUTS_DIR = PROJECT_DIR / "outputs"
 
 EVENT_TAGS = [
     "[clear throat]",

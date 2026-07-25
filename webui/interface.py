@@ -1,11 +1,17 @@
 import gradio as gr
 
 from webui.audio_processing import join_audio_chunks
-from webui.config import EVENT_TAGS, read_asset
+from webui.config import (
+    AUDIO_FILE_EXTENSIONS,
+    EVENT_TAGS,
+    TEXT_FILE_EXTENSIONS,
+    read_asset,
+)
 from webui.model import generate_audio_chunk, load_model, set_seed
 from webui.storage import (
     list_reference_samples,
-    load_text_file,
+    route_uploaded_file,
+    save_generated_audio,
     save_reference_sample,
 )
 from webui.text_processing import split_text
@@ -25,6 +31,22 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
             value=str(saved_path) if saved_path else None,
         )
 
+    def route_drop_target(file_path):
+        file_kind, value = route_uploaded_file(file_path)
+        if file_kind == "text":
+            return value, gr.skip(), gr.skip(), None
+        if file_kind == "audio":
+            return (
+                gr.skip(),
+                str(value),
+                gr.update(
+                    choices=list_reference_samples(),
+                    value=str(value),
+                ),
+                None,
+            )
+        return gr.skip(), gr.skip(), gr.skip(), None
+
     def generate(
         model,
         text,
@@ -38,6 +60,8 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
         norm_loudness,
         max_chunk_chars,
         pause_ms,
+        persistent_storage,
+        output_directory,
         progress=gr.Progress(),
     ):
         if not text or not text.strip():
@@ -72,8 +96,16 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
             )
 
         progress(1.0, desc="Joining audio")
-        audio = join_audio_chunks(generated, model.sr, pause_ms).numpy()
-        return model, (model.sr, audio)
+        audio = join_audio_chunks(generated, model.sr, pause_ms)
+        if persistent_storage:
+            saved_path = save_generated_audio(
+                audio,
+                model.sr,
+                text,
+                output_directory,
+            )
+            gr.Info(f"Saved generated audio to {saved_path}")
+        return model, (model.sr, audio.numpy())
 
     with gr.Blocks(title=f"Chatterbox Nano ({device_label})") as demo:
         gr.Markdown(f"# Chatterbox Nano — {device_label}")
@@ -95,10 +127,10 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                         min_width=320,
                         elem_id="main_textbox",
                     )
-                    text_file = gr.File(
-                        label="Drop or upload text",
+                    upload_file = gr.File(
+                        label="Drop text or reference audio",
                         file_count="single",
-                        file_types=[".txt", ".text", ".md"],
+                        file_types=sorted(TEXT_FILE_EXTENSIONS | AUDIO_FILE_EXTENSIONS),
                         type="filepath",
                         height=200,
                         scale=1,
@@ -173,9 +205,21 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                         value=250,
                         label="Pause between chunks (milliseconds)",
                     )
+                    persistent_storage = gr.Checkbox(
+                        value=True,
+                        label="Save generated audio",
+                    )
+                    output_directory = gr.Textbox(
+                        value="outputs/",
+                        label="Output folder",
+                    )
 
         demo.load(fn=load_nano_model, outputs=model_state)
-        text_file.change(fn=load_text_file, inputs=text_file, outputs=text)
+        upload_file.upload(
+            fn=route_drop_target,
+            inputs=upload_file,
+            outputs=[text, reference_audio, saved_reference, upload_file],
+        )
         reference_audio.input(
             fn=persist_reference_sample,
             inputs=reference_audio,
@@ -185,6 +229,11 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
             fn=lambda file_path: file_path,
             inputs=saved_reference,
             outputs=reference_audio,
+        )
+        persistent_storage.change(
+            fn=lambda enabled: gr.update(visible=enabled),
+            inputs=persistent_storage,
+            outputs=output_directory,
         )
         run_button.click(
             fn=generate,
@@ -201,6 +250,8 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                 norm_loudness,
                 max_chunk_chars,
                 pause_ms,
+                persistent_storage,
+                output_directory,
             ],
             outputs=[model_state, audio_output],
         )

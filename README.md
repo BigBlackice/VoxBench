@@ -20,6 +20,19 @@ Uploaded and recorded reference clips are automatically copied into the local
 uploading them a second time. The folder is excluded from Git because reference
 recordings may contain private voice data.
 
+The shared drop area beside the synthesis textbox accepts supported text files
+or reference-audio files. Text files populate the synthesis text; audio files
+replace the current reference and are saved into `samples/`. Other file types
+are rejected.
+
+## Generated output
+
+Generated audio is saved as WAV by default under the local `outputs/` folder
+while remaining available through Gradio's existing audio player and download
+button. Persistent storage can be disabled, or its destination changed, under
+**Advanced options**. Relative output paths are resolved from the project
+directory. Generated output is excluded from Git.
+
 ### Optional audio dependencies
 
 The base WebUI uses `requirements.txt`. Helpers for the planned audio-processing

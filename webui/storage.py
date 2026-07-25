@@ -2,13 +2,17 @@ import filecmp
 import re
 import shutil
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 import gradio as gr
+import soundfile as sf
 
 from webui.config import (
     AUDIO_FILE_EXTENSIONS,
     MAX_TEXT_FILE_BYTES,
+    OUTPUTS_DIR,
+    PROJECT_DIR,
     SAMPLES_DIR,
     TEXT_FILE_EXTENSIONS,
 )
@@ -48,6 +52,22 @@ def load_text_file(file_path: str | None) -> str:
         except UnicodeDecodeError:
             continue
     raise gr.Error("The text file encoding could not be recognized.")
+
+
+def route_uploaded_file(
+    file_path: str | None,
+    samples_dir: Path = SAMPLES_DIR,
+) -> tuple[str, str | Path | None]:
+    """Classify and process a file from the shared text/audio drop target."""
+    if not file_path:
+        return "empty", None
+
+    suffix = Path(file_path).suffix.lower()
+    if suffix in TEXT_FILE_EXTENSIONS:
+        return "text", load_text_file(file_path)
+    if suffix in AUDIO_FILE_EXTENSIONS:
+        return "audio", save_reference_sample(file_path, samples_dir)
+    raise gr.Error("Please upload a supported text or audio file.")
 
 
 def sanitize_sample_filename(filename: str) -> str:
@@ -111,4 +131,54 @@ def save_reference_sample(
         counter += 1
 
     shutil.copy2(source, target)
+    return target
+
+
+def resolve_output_directory(directory: str | None) -> Path:
+    """Resolve a user-provided output directory relative to the project root."""
+    if not directory or not directory.strip():
+        return OUTPUTS_DIR
+
+    path = Path(directory.strip()).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_DIR / path
+    return path.resolve()
+
+
+def generated_audio_filename(text: str, created_at: datetime | None = None) -> str:
+    """Create a readable filename from the generation time and prompt text."""
+    created_at = created_at or datetime.now()
+    prompt = re.sub(r"\[[^\]]+\]", "", text)
+    prompt = unicodedata.normalize("NFKC", prompt)
+    prompt = " ".join(prompt.split()[:5])
+    prompt = re.sub(r"[^\w.-]+", "_", prompt, flags=re.UNICODE).strip(" ._-")
+    prompt = prompt or "generated_audio"
+    return f"{created_at:%Y%m%d_%H%M%S}_{prompt}.wav"
+
+
+def save_generated_audio(
+    audio,
+    sample_rate: int,
+    text: str,
+    directory: str | None,
+) -> Path:
+    """Save generated audio as a collision-safe WAV file."""
+    output_dir = resolve_output_directory(directory)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise gr.Error(f"Could not create output folder: {error}") from error
+
+    filename = generated_audio_filename(text)
+    target = output_dir / filename
+    counter = 2
+    while target.exists():
+        target = output_dir / f"{Path(filename).stem}_{counter}.wav"
+        counter += 1
+
+    audio_data = audio.detach().cpu().float().numpy() if hasattr(audio, "detach") else audio
+    try:
+        sf.write(target, audio_data, sample_rate, format="WAV", subtype="PCM_16")
+    except (OSError, RuntimeError) as error:
+        raise gr.Error(f"Could not save generated audio: {error}") from error
     return target
