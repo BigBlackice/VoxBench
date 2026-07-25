@@ -1,4 +1,5 @@
 import os
+import shutil
 
 from webui.config import MODEL_CACHE_DIR, PROJECT_DIR
 
@@ -24,11 +25,12 @@ def detect_device() -> tuple[str, str]:
 
 
 DEVICE, DEVICE_LABEL = detect_device()
+FFMPEG_PATH = shutil.which("ffmpeg")
 
 from webui.interface import build_interface
 
 
-demo, CUSTOM_CSS = build_interface(DEVICE, DEVICE_LABEL)
+demo, CUSTOM_CSS = build_interface(DEVICE, DEVICE_LABEL, FFMPEG_PATH)
 
 
 def main() -> None:

@@ -4,6 +4,8 @@ from webui.audio_processing import join_audio_chunks
 from webui.config import (
     AUDIO_FILE_EXTENSIONS,
     EVENT_TAGS,
+    FFMPEG_DOWNLOAD_URL,
+    OUTPUT_FORMATS,
     TEXT_FILE_EXTENSIONS,
     read_asset,
 )
@@ -17,7 +19,11 @@ from webui.storage import (
 from webui.text_processing import split_text
 
 
-def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
+def build_interface(
+    device: str,
+    device_label: str,
+    ffmpeg_path: str | None,
+) -> tuple[gr.Blocks, str]:
     custom_css = read_asset("styles.css")
     insert_tag_js = read_asset("insert_tag.js")
 
@@ -62,6 +68,7 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
         pause_ms,
         persistent_storage,
         output_directory,
+        output_format,
         progress=gr.Progress(),
     ):
         if not text or not text.strip():
@@ -97,15 +104,19 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
 
         progress(1.0, desc="Joining audio")
         audio = join_audio_chunks(generated, model.sr, pause_ms)
+        audio_result = (model.sr, audio.numpy())
         if persistent_storage:
             saved_path = save_generated_audio(
                 audio,
                 model.sr,
                 text,
                 output_directory,
+                output_format,
+                ffmpeg_path,
             )
             gr.Info(f"Saved generated audio to {saved_path}")
-        return model, (model.sr, audio.numpy())
+            audio_result = str(saved_path)
+        return model, audio_result
 
     with gr.Blocks(title=f"Chatterbox Nano ({device_label})") as demo:
         gr.Markdown(f"# Chatterbox Nano — {device_label}")
@@ -213,8 +224,30 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                         value="outputs/",
                         label="Output folder",
                     )
+                    gr.Markdown(
+                        f"Formats other than .WAV require [FFmpeg]({FFMPEG_DOWNLOAD_URL})."
+                    )
+                    output_format = gr.Radio(
+                        choices=OUTPUT_FORMATS,
+                        value=".wav",
+                        label="Saved format",
+                        elem_id="output_format",
+                    )
 
         demo.load(fn=load_nano_model, outputs=model_state)
+        if not ffmpeg_path:
+            demo.load(
+                fn=None,
+                js="""() => {
+                    setTimeout(() => {
+                        document.querySelectorAll(
+                            '#output_format input[type="radio"]'
+                        ).forEach((option) => {
+                            option.disabled = option.value !== '.wav';
+                        });
+                    }, 0);
+                }""",
+            )
         upload_file.upload(
             fn=route_drop_target,
             inputs=upload_file,
@@ -252,6 +285,7 @@ def build_interface(device: str, device_label: str) -> tuple[gr.Blocks, str]:
                 pause_ms,
                 persistent_storage,
                 output_directory,
+                output_format,
             ],
             outputs=[model_state, audio_output],
         )

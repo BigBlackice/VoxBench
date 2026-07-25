@@ -31,13 +31,15 @@ Generated audio is saved as WAV by default under the local `outputs/` folder
 while remaining available through Gradio's existing audio player and download
 button. Persistent storage can be disabled, or its destination changed, under
 **Advanced options**. Relative output paths are resolved from the project
-directory. Generated output is excluded from Git.
+directory. MP3, M4A, OGG, and WebM export are also available when FFmpeg is
+installed. Only the selected format is stored. Generated output is excluded
+from Git.
 
 ### Optional audio dependencies
 
-The base WebUI uses `requirements.txt`. Helpers for the planned audio-processing
-and export features are kept separately in `requirements-audio.txt` so they are
-not required for ordinary speech generation.
+The base WebUI uses `requirements.txt`. Helpers for planned advanced
+audio-processing features are kept separately in `requirements-audio.txt` so
+they are not required for ordinary speech generation.
 
 Install the optional audio dependency set with:
 
@@ -53,9 +55,10 @@ On Linux or macOS:
 
 The optional file includes the base requirements, so it can also be used when
 building a fresh environment. FFmpeg itself is an external executable rather
-than a Python package. Planned MP3 export, chapter metadata, and advanced audio
-processing will detect it at runtime and direct users to the
-[official FFmpeg download page](https://ffmpeg.org/download.html) when needed.
+than a Python package. MP3, M4A, OGG, and WebM export detect it at startup;
+chapter metadata and advanced audio processing will also use it. When it is
+missing, the interface directs users to the
+[official FFmpeg download page](https://ffmpeg.org/download.html).
 
 ## Run on Windows
 
