@@ -121,8 +121,13 @@ def build_interface(
     with gr.Blocks(title=f"Chatterbox Nano ({device_label})") as demo:
         gr.Markdown(f"# Chatterbox Nano — {device_label}")
         gr.Markdown("The model is downloaded and loaded when the app opens for the first time.")
+        assembly_button = gr.Button("Chapter assembly", size="sm")
 
         model_state = gr.State(None)
+        assembly_button.click(
+            fn=None,
+            js="() => { window.open('/assemble/', '_blank', 'noopener'); }",
+        )
 
         with gr.Row():
             with gr.Column(scale=3):

@@ -9,9 +9,13 @@ sequential chunks.
 
 - Python 3.11
 - Git (used by pip to install the tested Chatterbox revision)
+- FFmpeg with FFprobe (optional; required for converted exports and chapter
+  assembly)
 
 The virtual environment and downloaded model cache are intentionally local and
 excluded from Git. Each operating system creates its own compatible copies.
+All required Python packages, including the FastAPI/Uvicorn HTTP stack, are
+installed from the baseline `requirements.txt`.
 
 ## Reference samples
 
@@ -35,29 +39,36 @@ directory. MP3, M4A, OGG, and WebM export are also available when FFmpeg is
 installed. Only the selected format is stored. Generated output is excluded
 from Git.
 
-### Optional audio dependencies
+## Chapter assembly
 
-The base WebUI uses `requirements.txt`. Helpers for planned advanced
-audio-processing features are kept separately in `requirements-audio.txt` so
-they are not required for ordinary speech generation.
+The **Chapter assembly** button opens a standalone interface at `/assemble` in
+a new browser tab. It starts in the project's `outputs/` folder. The Browse
+button opens the operating system's folder picker, and the file list displays
+only supported audio files. Files can be previewed as waveforms or added to an
+ordered chapter list.
 
-Install the optional audio dependency set with:
+The assembly interface supports non-destructive start/end trimming, per-file
+and batch volume adjustment, a speech equalization preset, reordering, and
+configurable silence or crossfade transitions. The default interval is 500 ms.
+Final files are saved under `outputs/` by default.
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-audio.txt
-```
+M4B exports contain sequential `Chapter 1`, `Chapter 2`, and later markers that
+VLC can display. MP3 exports contain ID3 chapter metadata, but VLC does not
+currently read MP3 `CHAP` frames. WAV export is available as a lossless
+alternative, but WAV does not reliably support embedded chapter markers.
 
-On Linux or macOS:
+FFmpeg and FFprobe are required for this interface. If they are unavailable,
+its controls are disabled and the interface links to the
+[official FFmpeg download page](https://ffmpeg.org/download.html).
 
-```sh
-./.venv/bin/python -m pip install -r requirements-audio.txt
-```
+### Optional FFmpeg support
 
-The optional file includes the base requirements, so it can also be used when
-building a fresh environment. FFmpeg itself is an external executable rather
-than a Python package. MP3, M4A, OGG, and WebM export detect it at startup;
-chapter metadata and advanced audio processing will also use it. When it is
-missing, the interface directs users to the
+FFmpeg is the only optional component and is an external executable rather than
+a Python package. FFprobe is normally included with FFmpeg. The application
+detects both at startup; no automated download or installation is performed.
+
+Without FFmpeg, WAV synthesis and the main WebUI remain available, while
+converted exports and chapter assembly are disabled. The interface links to the
 [official FFmpeg download page](https://ffmpeg.org/download.html).
 
 ## Run on Windows
