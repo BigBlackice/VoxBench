@@ -96,15 +96,13 @@ source sections, and can be opened directly in Chapter assembly.
 
 ## Run on Windows
 
-```powershell
-.\run.ps1
+Double-click `run.bat`, or run it from Command Prompt:
+
+```bat
+run.bat
 ```
 
-If PowerShell script execution is disabled, run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\run.ps1
-```
+The batch launcher does not require changing the PowerShell execution policy.
 
 ## Run on Linux or macOS
 
