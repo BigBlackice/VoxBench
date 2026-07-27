@@ -71,6 +71,29 @@ Without FFmpeg, WAV synthesis and the main WebUI remain available, while
 converted exports and chapter assembly are disabled. The interface links to the
 [official FFmpeg download page](https://ffmpeg.org/download.html).
 
+## Document workspace
+
+The **Document workspace** button opens `/doc/` in a new browser tab. PDF and
+EPUB files are imported into local projects under `documents/`, which is
+excluded from Git.
+
+The document viewer itself begins as a PDF/EPUB drag-and-drop or upload area,
+then changes into the source viewer after import. **Replace document** returns
+the same panel to upload mode. The workspace places an editable text section
+beside its original PDF page or EPUB chapter. It provides section navigation,
+autosave, renaming, reordering, duplication, removal, merging, cursor-based
+splitting, search and replace, reversible cleanup, and restoration of the
+originally extracted text. PDF pages become initial sections; EPUB spine
+chapters retain their natural order. OCR is not performed.
+
+The synthesis section beneath the editor can generate the current section,
+checked sections, or the entire document. Documents are processed one section
+at a time and use the existing automatic text chunking within each section.
+Whole-document synthesis first applies every cleanup operation, removes
+repeated headers and footers, and skips sections with no remaining text.
+Generated WAV chapters are saved under `outputs/`, remain linked to their
+source sections, and can be opened directly in Chapter assembly.
+
 ## Run on Windows
 
 ```powershell

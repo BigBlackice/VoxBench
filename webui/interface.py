@@ -1,4 +1,5 @@
 import gradio as gr
+from contextlib import nullcontext
 
 from webui.audio_processing import join_audio_chunks
 from webui.config import (
@@ -23,12 +24,20 @@ def build_interface(
     device: str,
     device_label: str,
     ffmpeg_path: str | None,
+    model_cache: dict | None = None,
 ) -> tuple[gr.Blocks, str]:
     custom_css = read_asset("styles.css")
     insert_tag_js = read_asset("insert_tag.js")
 
     def load_nano_model():
-        return load_model(device, device_label)
+        if model_cache is None:
+            return load_model(device, device_label)
+        if model_cache.get("model") is not None:
+            return model_cache["model"]
+        with model_cache["load_lock"]:
+            if model_cache.get("model") is None:
+                model_cache["model"] = load_model(device, device_label)
+        return model_cache["model"]
 
     def persist_reference_sample(file_path):
         saved_path = save_reference_sample(file_path)
@@ -83,24 +92,28 @@ def build_interface(
         chunks = split_text(text, int(max_chunk_chars))
         generated = []
 
-        for index, chunk in enumerate(chunks, start=1):
-            progress(
-                (index - 1) / len(chunks),
-                desc=f"Generating chunk {index} of {len(chunks)}",
-            )
-            generated.append(
-                generate_audio_chunk(
-                    model=model,
-                    text=chunk,
-                    audio_prompt_path=audio_prompt_path,
-                    temperature=temperature,
-                    min_p=min_p,
-                    top_p=top_p,
-                    top_k=int(top_k),
-                    repetition_penalty=repetition_penalty,
-                    norm_loudness=norm_loudness,
+        generation_context = (
+            model_cache["generation_lock"] if model_cache else nullcontext()
+        )
+        with generation_context:
+            for index, chunk in enumerate(chunks, start=1):
+                progress(
+                    (index - 1) / len(chunks),
+                    desc=f"Generating chunk {index} of {len(chunks)}",
                 )
-            )
+                generated.append(
+                    generate_audio_chunk(
+                        model=model,
+                        text=chunk,
+                        audio_prompt_path=audio_prompt_path,
+                        temperature=temperature,
+                        min_p=min_p,
+                        top_p=top_p,
+                        top_k=int(top_k),
+                        repetition_penalty=repetition_penalty,
+                        norm_loudness=norm_loudness,
+                    )
+                )
 
         progress(1.0, desc="Joining audio")
         audio = join_audio_chunks(generated, model.sr, pause_ms)
@@ -122,11 +135,16 @@ def build_interface(
         gr.Markdown(f"# Chatterbox Nano — {device_label}")
         gr.Markdown("The model is downloaded and loaded when the app opens for the first time.")
         assembly_button = gr.Button("Chapter assembly", size="sm")
+        document_button = gr.Button("Document workspace", size="sm")
 
         model_state = gr.State(None)
         assembly_button.click(
             fn=None,
             js="() => { window.open('/assemble/', '_blank', 'noopener'); }",
+        )
+        document_button.click(
+            fn=None,
+            js="() => { window.open('/doc/', '_blank', 'noopener'); }",
         )
 
         with gr.Row():
@@ -163,7 +181,11 @@ def build_interface(
                             js=insert_tag_js,
                         )
 
-                audio_output = gr.Audio(label="Generated audio", elem_id="generated_audio")
+                audio_output = gr.Audio(
+                    label="Generated audio",
+                    elem_id="generated_audio",
+                    elem_classes=["audio-waveform"],
+                )
                 run_button = gr.Button("Generate", variant="primary")
 
             with gr.Column(scale=2):
@@ -171,6 +193,7 @@ def build_interface(
                     sources=["upload", "microphone"],
                     type="filepath",
                     label="Reference audio (optional)",
+                    elem_classes=["audio-waveform"],
                 )
                 saved_reference = gr.Dropdown(
                     choices=list_reference_samples(),

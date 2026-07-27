@@ -279,6 +279,7 @@ def build_assembly_interface(
                     type="filepath",
                     interactive=False,
                     waveform_options={"show_recording_waveform": True},
+                    elem_classes=["audio-waveform"],
                 )
                 with gr.Row():
                     preview_volume = gr.Slider(
@@ -394,7 +395,11 @@ def build_assembly_interface(
                 variant="primary",
                 interactive=tools_available,
             )
-            final_audio = gr.Audio(label="Assembled audio", type="filepath")
+            final_audio = gr.Audio(
+                label="Assembled audio",
+                type="filepath",
+                elem_classes=["audio-waveform"],
+            )
             final_download = gr.File(label="Download assembled file")
 
         open_folder.click(

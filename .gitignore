@@ -14,6 +14,9 @@ samples/*
 # Generated audio
 outputs/
 
+# Imported document projects, edits, and generated chapter audio
+documents/
+
 # Python-generated files
 __pycache__/
 *.py[cod]
