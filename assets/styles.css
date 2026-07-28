@@ -1,3 +1,25 @@
+.gradio-container {
+    /*
+     * Component surfaces use only the theme background and text colors.
+     * Mixing toward the contrasting text color makes dark backgrounds a
+     * little lighter and light backgrounds a little darker. Browsers without
+     * color-mix support fall back to the unmodified background color.
+     */
+    --voxbench-component-fill: var(--background-fill-primary);
+    --voxbench-component-fill: color-mix(
+        in srgb,
+        var(--background-fill-primary) 94%,
+        var(--body-text-color) 6%
+    );
+    --background-fill-secondary: var(--voxbench-component-fill);
+    --block-background-fill: var(--voxbench-component-fill);
+    --block-label-background-fill: var(--voxbench-component-fill);
+    --input-background-fill: var(--voxbench-component-fill);
+    --input-background-fill-focus: var(--voxbench-component-fill);
+    --input-background-fill-hover: var(--voxbench-component-fill);
+    --panel-background-fill: var(--voxbench-component-fill);
+}
+
 .tag-container {
     display: flex !important;
     flex-wrap: wrap !important;
