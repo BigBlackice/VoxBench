@@ -431,7 +431,7 @@ def build_document_interface(
                     variant="stop",
                 )
 
-        with gr.Group():
+        with gr.Group(elem_classes=["voxbench-surface"]):
             gr.Markdown("## Synthesize document")
             gr.Markdown(
                 "Sections are processed sequentially; each section still uses "
@@ -482,11 +482,18 @@ def build_document_interface(
                         label="Pause between chunks (ms)",
                     )
             with gr.Row():
-                synth_current = gr.Button("Synthesize current section")
-                synth_selected = gr.Button("Synthesize selected sections")
+                synth_current = gr.Button(
+                    "Synthesize current section",
+                    elem_classes=["voxbench-button"],
+                )
+                synth_selected = gr.Button(
+                    "Synthesize selected sections",
+                    elem_classes=["voxbench-button"],
+                )
                 synth_all = gr.Button(
                     "Synthesize entire document",
                     variant="primary",
+                    elem_classes=["voxbench-button"],
                 )
 
         main_button.click(

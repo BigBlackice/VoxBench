@@ -173,7 +173,10 @@ def build_interface(
 
                 with gr.Row(elem_classes=["tag-container"]):
                     for tag in EVENT_TAGS:
-                        button = gr.Button(tag, elem_classes=["tag-btn"])
+                        button = gr.Button(
+                            tag,
+                            elem_classes=["tag-btn", "voxbench-button"],
+                        )
                         button.click(
                             fn=None,
                             inputs=[button, text],

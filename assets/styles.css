@@ -34,9 +34,9 @@
     width: auto !important;
     height: 32px !important;
     font-size: 13px !important;
-    background: #eef2ff !important;
-    border: 1px solid #c7d2fe !important;
-    color: #3730a3 !important;
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    color: var(--body-text-color) !important;
     border-radius: 6px !important;
     padding: 0 10px !important;
     margin: 0 !important;
@@ -44,7 +44,31 @@
 }
 
 .tag-btn:hover {
+    background: var(--background-fill-secondary) !important;
+    border-color: var(--border-color-accent) !important;
     transform: translateY(-1px);
+}
+
+.voxbench-surface,
+.voxbench-surface-note {
+    background: var(--voxbench-component-fill) !important;
+}
+
+.voxbench-button,
+.voxbench-button > button,
+button.voxbench-button {
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: var(--radius-md) !important;
+    box-shadow: none !important;
+    color: var(--body-text-color) !important;
+}
+
+.voxbench-button:hover,
+.voxbench-button > button:hover,
+button.voxbench-button:hover {
+    background: var(--background-fill-secondary) !important;
+    border-color: var(--border-color-accent) !important;
 }
 
 .gradio-container button:not(.icon-button):not([aria-label]) {

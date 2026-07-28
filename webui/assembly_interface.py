@@ -338,7 +338,7 @@ def build_assembly_interface(
             move_down = gr.Button("Move down", interactive=tools_available)
             remove = gr.Button("Remove", interactive=tools_available)
 
-        with gr.Group():
+        with gr.Group(elem_classes=["voxbench-surface"]):
             gr.Markdown("### Final assembly")
             with gr.Row():
                 transition_mode = gr.Radio(
@@ -372,7 +372,8 @@ def build_assembly_interface(
             gr.Markdown(
                 "M4B exposes embedded chapters in VLC. MP3 contains ID3 "
                 "chapter metadata, but VLC does not read it. WAV is lossless "
-                "and has no reliable embedded chapter support."
+                "and has no reliable embedded chapter support.",
+                elem_classes=["voxbench-surface-note"],
             )
             with gr.Row():
                 output_format = gr.Radio(
@@ -394,6 +395,7 @@ def build_assembly_interface(
                 "Assemble and export",
                 variant="primary",
                 interactive=tools_available,
+                elem_classes=["voxbench-button"],
             )
             final_audio = gr.Audio(
                 label="Assembled audio",
