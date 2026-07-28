@@ -5,19 +5,57 @@
      * little lighter and light backgrounds a little darker. Browsers without
      * color-mix support fall back to the unmodified background color.
      */
-    --voxbench-component-fill: var(--background-fill-primary);
+    --background-fill-primary: var(--voxbench-theme-background) !important;
+    --body-background-fill: var(--voxbench-theme-background) !important;
+    --body-text-color: var(--voxbench-theme-text) !important;
+    --body-text-color-subdued: var(--voxbench-theme-text) !important;
+    --border-color-primary: var(--voxbench-theme-outline) !important;
+    --border-color-accent: var(--voxbench-theme-outline) !important;
+    --border-color-accent-subdued: var(--voxbench-theme-outline) !important;
+
+    --voxbench-background: var(--voxbench-theme-background);
+    --voxbench-outline: var(--voxbench-theme-outline);
+    --voxbench-text: var(--voxbench-theme-text);
+    --voxbench-surface-mix: var(--voxbench-theme-surface-mix);
+    --voxbench-component-fill: var(--voxbench-background);
     --voxbench-component-fill: color-mix(
         in srgb,
-        var(--background-fill-primary) 94%,
-        var(--body-text-color) 6%
+        var(--voxbench-background),
+        var(--voxbench-text) var(--voxbench-surface-mix)
     );
-    --background-fill-secondary: var(--voxbench-component-fill);
-    --block-background-fill: var(--voxbench-component-fill);
-    --block-label-background-fill: var(--voxbench-component-fill);
-    --input-background-fill: var(--voxbench-component-fill);
-    --input-background-fill-focus: var(--voxbench-component-fill);
-    --input-background-fill-hover: var(--voxbench-component-fill);
-    --panel-background-fill: var(--voxbench-component-fill);
+    --background-fill-secondary: var(--voxbench-component-fill) !important;
+    --block-background-fill: var(--voxbench-component-fill) !important;
+    --block-label-background-fill: var(--voxbench-component-fill) !important;
+    --input-background-fill: var(--voxbench-component-fill) !important;
+    --input-background-fill-focus: var(--voxbench-component-fill) !important;
+    --input-background-fill-hover: var(--voxbench-component-fill) !important;
+    --panel-background-fill: var(--voxbench-component-fill) !important;
+
+    --button-primary-background-fill: transparent !important;
+    --button-primary-background-fill-hover: var(--voxbench-component-fill) !important;
+    --button-primary-border-color: var(--border-color-primary) !important;
+    --button-primary-border-color-hover: var(--border-color-accent) !important;
+    --button-primary-text-color: var(--body-text-color) !important;
+    --button-primary-text-color-hover: var(--body-text-color) !important;
+
+    --button-secondary-background-fill: transparent !important;
+    --button-secondary-background-fill-hover: var(--voxbench-component-fill) !important;
+    --button-secondary-border-color: var(--border-color-primary) !important;
+    --button-secondary-border-color-hover: var(--border-color-accent) !important;
+    --button-secondary-text-color: var(--body-text-color) !important;
+    --button-secondary-text-color-hover: var(--body-text-color) !important;
+
+    --button-cancel-background-fill: transparent !important;
+    --button-cancel-background-fill-hover: var(--voxbench-component-fill) !important;
+    --button-cancel-border-color: var(--border-color-primary) !important;
+    --button-cancel-border-color-hover: var(--border-color-accent) !important;
+    --button-cancel-text-color: var(--body-text-color) !important;
+    --button-cancel-text-color-hover: var(--body-text-color) !important;
+}
+
+body {
+    background: var(--voxbench-theme-background) !important;
+    color: var(--voxbench-theme-text) !important;
 }
 
 .tag-container {
@@ -50,12 +88,41 @@
 }
 
 .voxbench-surface,
-.voxbench-surface-note {
+.voxbench-surface-note,
+.voxbench-surface .styler,
+.voxbench-surface > div {
     background: var(--voxbench-component-fill) !important;
 }
 
+/*
+ * Gradio's Group renderer does not forward elem_classes in 6.8 and places
+ * zero-width button borders in an inline custom property. Target its stable
+ * generated structure so grouped headers, notes, rows, and buttons follow the
+ * same theme rules as standalone components.
+ */
+.gradio-container .gr-group > .styler {
+    --button-border-width: 1px !important;
+    background: var(--voxbench-component-fill) !important;
+}
+
+.gradio-container .gr-group > .styler > .block,
+.gradio-container .gr-group > .styler > .row {
+    background: var(--voxbench-component-fill) !important;
+}
+
+.gradio-container .gr-group > .styler button:not(.icon-button) {
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    color: var(--body-text-color) !important;
+}
+
+.gradio-container .gr-group > .styler button:not(.icon-button):hover {
+    background: var(--background-fill-secondary) !important;
+    border-color: var(--border-color-accent) !important;
+}
+
 .voxbench-button,
-.voxbench-button > button,
+.voxbench-button button,
 button.voxbench-button {
     background: transparent !important;
     border: 1px solid var(--border-color-primary) !important;
@@ -65,7 +132,7 @@ button.voxbench-button {
 }
 
 .voxbench-button:hover,
-.voxbench-button > button:hover,
+.voxbench-button button:hover,
 button.voxbench-button:hover {
     background: var(--background-fill-secondary) !important;
     border-color: var(--border-color-accent) !important;

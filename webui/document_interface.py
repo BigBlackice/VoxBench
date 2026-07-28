@@ -26,6 +26,7 @@ from webui.document_workspace import (
 )
 from webui.model import generate_audio_chunk, load_model, set_seed
 from webui.text_processing import split_text
+from webui.themes import themed_styles
 
 
 OUTLINE_HEADERS = ["", "Select", "#", "Section", "Words", "Characters", "Status"]
@@ -36,7 +37,7 @@ def build_document_interface(
     device_label: str,
     model_cache: dict,
 ) -> tuple[gr.Blocks, str]:
-    custom_css = read_asset("styles.css")
+    custom_css = themed_styles()
 
     def get_model():
         if model_cache.get("model") is not None:

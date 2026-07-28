@@ -18,6 +18,7 @@ from webui.storage import (
     save_reference_sample,
 )
 from webui.text_processing import split_text
+from webui.themes import themed_styles
 
 
 def build_interface(
@@ -26,7 +27,7 @@ def build_interface(
     ffmpeg_path: str | None,
     model_cache: dict | None = None,
 ) -> tuple[gr.Blocks, str]:
-    custom_css = read_asset("styles.css")
+    custom_css = themed_styles()
     insert_tag_js = read_asset("insert_tag.js")
 
     def load_nano_model():

@@ -18,6 +18,7 @@ from webui.chapter_assembly import (
     update_batch_item,
 )
 from webui.config import FFMPEG_DOWNLOAD_URL, read_asset
+from webui.themes import themed_styles
 
 
 BROWSER_HEADERS = ["Add", "Name"]
@@ -36,7 +37,7 @@ def build_assembly_interface(
     ffmpeg_path: str | None,
     ffprobe_path: str | None,
 ) -> tuple[gr.Blocks, str]:
-    custom_css = read_asset("styles.css")
+    custom_css = themed_styles()
     tools_available = bool(ffmpeg_path and ffprobe_path)
     initial_path = initial_folder()
     initial_rows = list_folder(initial_path)[1]
