@@ -15,6 +15,7 @@ from webui.document_workspace import (
     outline_rows,
     prepare_entire_document,
     remove_repeated_headers_footers,
+    reorder_sections,
     replace_text,
     restore_section,
     restructure_section,
@@ -27,7 +28,7 @@ from webui.model import generate_audio_chunk, load_model, set_seed
 from webui.text_processing import split_text
 
 
-OUTLINE_HEADERS = ["Select", "#", "Section", "Words", "Characters", "Status"]
+OUTLINE_HEADERS = ["", "Select", "#", "Section", "Words", "Characters", "Status"]
 
 
 def build_document_interface(
@@ -116,6 +117,8 @@ def build_document_interface(
     def select_outline(document_id, rows, evt: gr.SelectData):
         if not document_id or not evt.index:
             return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        if isinstance(evt.index, (tuple, list)) and evt.index[1] == 0:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip()
         row_index = evt.index[0] if isinstance(evt.index, (tuple, list)) else evt.index
         manifest = load_manifest(document_id)
         if row_index < 0 or row_index >= len(manifest["sections"]):
@@ -164,6 +167,17 @@ def build_document_interface(
         selected = set(selected_section_ids(document_id, rows))
         gr.Info(f"Replaced {count} occurrence(s).")
         return section["text"], outline_rows(document_id, selected)
+
+    def reorder_queue(document_id, order_value, rows):
+        if not document_id or not order_value:
+            return gr.skip()
+        selected = set(selected_section_ids(document_id, rows))
+        try:
+            order = [int(value) for value in order_value.split(",")]
+        except ValueError as error:
+            raise gr.Error("The document queue returned an invalid order.") from error
+        reorder_sections(document_id, order)
+        return outline_rows(document_id, selected)
 
     def restructure(document_id, section_id, title, text, action, rows):
         save_editor_section(document_id, section_id, title, text)
@@ -311,14 +325,28 @@ def build_document_interface(
                 outline = gr.Dataframe(
                     value=outline_rows(initial_document) if initial_document else [],
                     headers=OUTLINE_HEADERS,
-                    datatype=["bool", "number", "str", "number", "number", "str"],
+                    datatype=[
+                        "str",
+                        "bool",
+                        "number",
+                        "str",
+                        "number",
+                        "number",
+                        "str",
+                    ],
                     type="array",
                     label="Document outline and generation queue",
                     interactive=True,
-                    column_count=6,
+                    column_count=7,
                     row_count=0,
                     max_height=300,
                     wrap=True,
+                    elem_id="document_outline",
+                )
+                reorder_signal = gr.Textbox(
+                    container=False,
+                    elem_id="document_queue_order",
+                    elem_classes=["document-queue-order"],
                 )
                 section_title = gr.Textbox(
                     label="Section title",
@@ -357,23 +385,22 @@ def build_document_interface(
                         cleanup_button = gr.Button("Apply to editor")
                         headers_button = gr.Button("Remove repeated headers/footers")
                     with gr.Row():
-                        move_up = gr.Button("Move up")
-                        move_down = gr.Button("Move down")
                         duplicate = gr.Button("Duplicate")
                         remove = gr.Button("Remove")
                     with gr.Row():
                         merge_previous = gr.Button("Merge previous")
                         merge_next = gr.Button("Merge next")
                         split_button = gr.Button("Split at marker")
-                    with gr.Row():
-                        search = gr.Textbox(label="Find")
-                        replacement = gr.Textbox(label="Replace with")
-                        replace_scope = gr.Radio(
-                            choices=["Current section", "Entire document"],
-                            value="Current section",
-                            label="Scope",
-                        )
-                        replace_button = gr.Button("Replace")
+                    with gr.Group():
+                        with gr.Row():
+                            search = gr.Textbox(label="Find")
+                            replacement = gr.Textbox(label="Replace with")
+                            replace_scope = gr.Radio(
+                                choices=["Current section", "Entire document"],
+                                value="Current section",
+                                label="Scope",
+                            )
+                            replace_button = gr.Button("Replace")
 
             with gr.Column(scale=1, min_width=420):
                 gr.Markdown("## Document viewer")
@@ -515,6 +542,11 @@ def build_document_interface(
             inputs=[document_state, outline],
             outputs=[active_section, section_title, editor, source_viewer],
         )
+        reorder_signal.input(
+            fn=reorder_queue,
+            inputs=[document_state, reorder_signal, outline],
+            outputs=outline,
+        )
         save_button.click(
             fn=save_current,
             inputs=[
@@ -601,8 +633,6 @@ def build_document_interface(
             source_viewer,
         ]
         for button, action in [
-            (move_up, "Move up"),
-            (move_down, "Move down"),
             (duplicate, "Duplicate"),
             (remove, "Remove"),
             (merge_previous, "Merge previous"),
@@ -621,6 +651,8 @@ def build_document_interface(
                 inputs=[*structure_inputs, outline],
                 outputs=structure_outputs,
             )
+
+        demo.load(fn=None, js=read_asset("document_queue.js"))
 
         synthesis_inputs = [
             document_state,

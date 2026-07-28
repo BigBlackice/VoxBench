@@ -22,8 +22,56 @@
 }
 
 .tag-btn:hover {
-    background: #c7d2fe !important;
     transform: translateY(-1px);
+}
+
+.gradio-container button:not(.icon-button):not([aria-label]) {
+    background: transparent !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: var(--radius-md) !important;
+    box-shadow: none !important;
+    color: var(--body-text-color) !important;
+}
+
+.gradio-container button:not(.icon-button):not([aria-label]):hover {
+    background: var(--background-fill-secondary) !important;
+    border-color: var(--border-color-accent) !important;
+}
+
+.gradio-container button:not(.icon-button):not([aria-label]):disabled {
+    background: transparent !important;
+    opacity: 0.45;
+}
+
+.document-queue-order {
+    display: none !important;
+}
+
+#document_outline table tbody tr.queue-draggable {
+    transition: opacity 100ms ease;
+}
+
+#document_outline table tbody tr.queue-dragging {
+    opacity: 0.4;
+}
+
+#document_outline table tbody tr.queue-drag-over {
+    box-shadow: inset 0 2px 0 var(--border-color-accent);
+}
+
+#document_outline table tbody td:first-child {
+    width: 34px !important;
+    min-width: 34px !important;
+    max-width: 34px !important;
+    cursor: grab;
+    font-size: 18px;
+    font-weight: 700;
+    text-align: center;
+    user-select: none;
+}
+
+#document_outline table tbody td:first-child:active {
+    cursor: grabbing;
 }
 
 .audio-waveform .timestamps {

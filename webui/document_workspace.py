@@ -285,6 +285,7 @@ def outline_rows(document_id: str, selected: set[str] | None = None) -> list[lis
         text = section["text"]
         rows.append(
             [
+                "⋮⋮",
                 section_id in selected,
                 index,
                 section["title"],
@@ -294,6 +295,16 @@ def outline_rows(document_id: str, selected: set[str] | None = None) -> list[lis
             ]
         )
     return rows
+
+
+def reorder_sections(document_id: str, order: list[int]) -> None:
+    manifest = load_manifest(document_id)
+    section_ids = manifest["sections"]
+    expected = list(range(1, len(section_ids) + 1))
+    if sorted(order) != expected:
+        raise gr.Error("The document queue returned an invalid section order.")
+    manifest["sections"] = [section_ids[index - 1] for index in order]
+    save_manifest(manifest)
 
 
 def first_section_id(document_id: str) -> str:
@@ -534,7 +545,7 @@ def selected_section_ids(
     return [
         section_id
         for section_id, row in zip(manifest["sections"], rows)
-        if row and bool(row[0])
+        if row and bool(row[1])
     ]
 
 
