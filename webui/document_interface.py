@@ -4,6 +4,7 @@ from webui.audio_processing import join_audio_chunks
 from webui.config import read_asset
 from webui.document_workspace import (
     SPLIT_MARKER,
+    clear_document_projects,
     clean_text,
     first_section_id,
     import_document,
@@ -93,11 +94,23 @@ def build_document_interface(
             gr.update(visible=True),
         )
 
-    def show_document_upload():
+    def clear_and_show_document_upload():
+        removed = clear_document_projects()
+        gr.Info(f"Cleared {removed} stored document project(s).")
         return (
+            gr.update(choices=[], value=None),
+            None,
+            None,
+            [],
+            "",
+            "",
             gr.update(value=None, visible=True),
+            gr.update(
+                value="<p>Drop or upload a document to begin.</p>",
+                visible=False,
+            ),
             gr.update(visible=False),
-            gr.update(visible=False),
+            None,
         )
 
     def select_outline(document_id, rows, evt: gr.SelectData):
@@ -388,6 +401,7 @@ def build_document_interface(
                 replace_document = gr.Button(
                     "Replace document",
                     visible=bool(initial_document),
+                    variant="stop",
                 )
 
         with gr.Group():
@@ -468,8 +482,19 @@ def build_document_interface(
             ],
         )
         replace_document.click(
-            fn=show_document_upload,
-            outputs=[document_upload, source_viewer, replace_document],
+            fn=clear_and_show_document_upload,
+            outputs=[
+                document_picker,
+                document_state,
+                active_section,
+                outline,
+                section_title,
+                editor,
+                document_upload,
+                source_viewer,
+                replace_document,
+                generated_audio,
+            ],
         )
         document_picker.change(
             fn=open_document,

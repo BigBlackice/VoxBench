@@ -255,6 +255,27 @@ def list_documents() -> list[tuple[str, str]]:
     return sorted(documents, key=lambda item: item[1], reverse=True)
 
 
+def clear_document_projects() -> int:
+    """Remove all imported document projects without touching generated output."""
+    documents_path = DOCUMENTS_DIR.resolve()
+    project_path = PROJECT_DIR.resolve()
+    if documents_path != project_path / "documents":
+        raise gr.Error("Refusing to clear an unexpected document directory.")
+    if not documents_path.exists():
+        return 0
+
+    project_count = sum(
+        1
+        for path in documents_path.iterdir()
+        if path.is_dir() and (path / "document.json").is_file()
+    )
+    try:
+        shutil.rmtree(documents_path)
+    except OSError as error:
+        raise gr.Error(f"Could not clear stored document data: {error}") from error
+    return project_count
+
+
 def outline_rows(document_id: str, selected: set[str] | None = None) -> list[list[Any]]:
     manifest = load_manifest(document_id)
     selected = selected or set()
