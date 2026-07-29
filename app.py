@@ -12,8 +12,16 @@ os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 import torch
 import uvicorn
 import gradio as gr
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+
+from webui.auth import (
+    SharedAuthMiddleware,
+    authenticate_login,
+    load_auth_settings,
+    login_page,
+)
 
 
 def detect_device() -> tuple[str, str]:
@@ -33,6 +41,7 @@ def detect_device() -> tuple[str, str]:
 DEVICE, DEVICE_LABEL = detect_device()
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
+AUTH_SETTINGS = load_auth_settings()
 
 from webui.assembly_interface import build_assembly_interface
 from webui.document_interface import build_document_interface
@@ -69,6 +78,39 @@ document_demo.queue(max_size=10, default_concurrency_limit=1)
 web_app = FastAPI()
 
 
+if AUTH_SETTINGS.enabled:
+    web_app.add_middleware(SharedAuthMiddleware)
+    web_app.add_middleware(
+        SessionMiddleware,
+        secret_key=AUTH_SETTINGS.session_secret,
+        session_cookie="voxbench_session",
+        same_site="lax",
+        https_only=AUTH_SETTINGS.cookie_secure,
+        max_age=60 * 60 * 24 * 30,
+    )
+
+
+@web_app.get("/login", include_in_schema=False)
+def show_login(next: str = "/"):
+    if not AUTH_SETTINGS.enabled:
+        return RedirectResponse("/")
+    return login_page(next)
+
+
+@web_app.post("/login", include_in_schema=False)
+async def submit_login(request: Request):
+    if not AUTH_SETTINGS.enabled:
+        return RedirectResponse("/")
+    return await authenticate_login(request, AUTH_SETTINGS)
+
+
+@web_app.get("/logout", include_in_schema=False)
+def logout(request: Request):
+    if AUTH_SETTINGS.enabled:
+        request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
 @web_app.get("/assemble", include_in_schema=False)
 def redirect_to_assembly() -> RedirectResponse:
     return RedirectResponse("/assemble/")
@@ -94,8 +136,8 @@ web_app = gr.mount_gradio_app(
     web_app,
     document_demo,
     path="/doc",
-    server_name="127.0.0.1",
-    server_port=7860,
+    server_name=AUTH_SETTINGS.host,
+    server_port=AUTH_SETTINGS.port,
     css=DOCUMENT_CSS,
     allowed_paths=[str(PROJECT_DIR)],
 )
@@ -103,8 +145,8 @@ web_app = gr.mount_gradio_app(
     web_app,
     assembly_demo,
     path="/assemble",
-    server_name="127.0.0.1",
-    server_port=7860,
+    server_name=AUTH_SETTINGS.host,
+    server_port=AUTH_SETTINGS.port,
     css=ASSEMBLY_CSS,
     allowed_paths=[str(PROJECT_DIR)],
 )
@@ -112,22 +154,23 @@ web_app = gr.mount_gradio_app(
     web_app,
     demo,
     path="/",
-    server_name="127.0.0.1",
-    server_port=7860,
+    server_name=AUTH_SETTINGS.host,
+    server_port=AUTH_SETTINGS.port,
     css=CUSTOM_CSS,
     allowed_paths=[str(PROJECT_DIR)],
 )
 
 
 def main() -> None:
+    local_url = f"http://127.0.0.1:{AUTH_SETTINGS.port}"
     threading.Timer(
         1.0,
-        lambda: webbrowser.open("http://127.0.0.1:7860"),
+        lambda: webbrowser.open(local_url),
     ).start()
     uvicorn.run(
         web_app,
-        host="127.0.0.1",
-        port=7860,
+        host=AUTH_SETTINGS.host,
+        port=AUTH_SETTINGS.port,
     )
 
 

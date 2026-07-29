@@ -117,3 +117,56 @@ chmod +x run.sh
 Both launchers create `.venv` with Python 3.11 when needed, install the pinned
 dependencies, and start the local interface. Model weights are downloaded to
 `.cache/huggingface` on first launch.
+
+## Shared login and remote access
+
+VoxBench remains local-only by default. Optional shared login and network
+access are configured through a private `.env` file in the project directory.
+Copy `.env.example` to `.env`; the real `.env` is excluded from Git.
+
+Generate a password hash without storing the plain-text password:
+
+```bat
+.venv\Scripts\python.exe -m webui.auth hash-password
+```
+
+On Linux or macOS:
+
+```sh
+.venv/bin/python -m webui.auth hash-password
+```
+
+Paste the result into `VOXBENCH_PASSWORD_HASH`. Generate the independent
+session-signing secret with:
+
+```bat
+.venv\Scripts\python.exe -m webui.auth generate-secret
+```
+
+Then configure `.env`:
+
+```dotenv
+VOXBENCH_AUTH_ENABLED=true
+VOXBENCH_REMOTE_ACCESS=true
+VOXBENCH_PORT=7860
+VOXBENCH_USERNAME=voxbench
+VOXBENCH_PASSWORD_HASH=pbkdf2_sha256$...
+VOXBENCH_SESSION_SECRET=...
+VOXBENCH_COOKIE_SECURE=false
+```
+
+Authentication protects the main synthesizer, document workspace, chapter
+assembly, Gradio APIs and queues, uploaded/generated media, document sources,
+and download routes with one signed login session.
+
+`VOXBENCH_REMOTE_ACCESS=true` changes the bind address from `127.0.0.1` to
+`0.0.0.0`. VoxBench refuses to enable remote binding unless authentication is
+also enabled and completely configured. Binding to `0.0.0.0` makes the chosen
+port reachable from networks permitted by the host firewall and router; it
+does not itself provide HTTPS or configure DDNS/port forwarding.
+
+For internet-facing access, place VoxBench behind an HTTPS reverse proxy and
+restrict access with the operating-system firewall and router. Set
+`VOXBENCH_COOKIE_SECURE=true` only when clients reach VoxBench through HTTPS.
+Do not expose the Uvicorn development server directly to the public internet.
+VoxBench listens on only `VOXBENCH_PORT` (7860 by default).
