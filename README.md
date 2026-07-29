@@ -1,9 +1,15 @@
-# Chatterbox Nano Web UI
+# VoxBench
 
-A local Gradio interface for Resemble AI's Chatterbox-Nano model. The app
-automatically selects NVIDIA CUDA, AMD ROCm, or Apple Metal when supported by
-the installed PyTorch build, falls back to CPU, and splits long text into
-sequential chunks.
+VoxBench is a self-hosted workspace for generating, reviewing, organizing, and
+assembling speech with Resemble AI's Chatterbox Nano model. It automatically
+selects NVIDIA CUDA, AMD ROCm, or Apple Metal when supported by the installed
+PyTorch build, falls back to CPU, and splits long text into sequential chunks.
+
+VoxBench is an independent project and is not affiliated with or endorsed by
+Resemble AI.
+
+> **Release status:** VoxBench v0.1.0 beta. Core workflows are functional, but
+> interfaces, configuration, and stored document formats may change before v1.0.
 
 ## Requirements
 
@@ -16,6 +22,32 @@ The virtual environment and downloaded model cache are intentionally local and
 excluded from Git. Each operating system creates its own compatible copies.
 All required Python packages, including the FastAPI/Uvicorn HTTP stack, are
 installed from the baseline `requirements.txt`.
+
+## Install and run
+
+Clone the repository:
+
+```sh
+git clone https://github.com/BigBlackice/VoxBench.git
+cd VoxBench
+```
+
+On Windows, double-click `run.bat` or run it from Command Prompt:
+
+```bat
+run.bat
+```
+
+On Linux or macOS:
+
+```sh
+chmod +x run.sh
+./run.sh
+```
+
+Both launchers create a local `.venv` using Python 3.11 when needed, install
+the pinned dependencies, and start VoxBench at <http://127.0.0.1:7860>. Model
+weights are downloaded to `.cache/huggingface` on first launch.
 
 ## Reference samples
 
@@ -97,27 +129,6 @@ repeated headers and footers, and skips sections with no remaining text.
 Generated WAV chapters are saved under `outputs/`, remain linked to their
 source sections, and can be opened directly in Chapter assembly.
 
-## Run on Windows
-
-Double-click `run.bat`, or run it from Command Prompt:
-
-```bat
-run.bat
-```
-
-The batch launcher does not require changing the PowerShell execution policy.
-
-## Run on Linux or macOS
-
-```sh
-chmod +x run.sh
-./run.sh
-```
-
-Both launchers create `.venv` with Python 3.11 when needed, install the pinned
-dependencies, and start the local interface. Model weights are downloaded to
-`.cache/huggingface` on first launch.
-
 ## Shared login and remote access
 
 VoxBench remains local-only by default. Optional shared login and network
@@ -170,3 +181,14 @@ restrict access with the operating-system firewall and router. Set
 `VOXBENCH_COOKIE_SECURE=true` only when clients reach VoxBench through HTTPS.
 Do not expose the Uvicorn development server directly to the public internet.
 VoxBench listens on only `VOXBENCH_PORT` (7860 by default).
+
+## License
+
+VoxBench is licensed under the
+[GNU Affero General Public License v3.0 or later](LICENSE). Users interacting
+with a modified version over a network must be offered the corresponding
+source code for that version.
+
+Third-party components retain their own licenses. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and upstream
+project links.

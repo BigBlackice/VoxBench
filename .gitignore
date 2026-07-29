@@ -21,7 +21,6 @@ documents/
 __pycache__/
 *.py[cod]
 *$py.class
-tests/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -52,4 +51,3 @@ desktop.ini
 
 # Local planning notes
 todo.md
-.gitattributes

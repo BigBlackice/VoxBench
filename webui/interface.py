@@ -266,6 +266,11 @@ def build_interface(
                         elem_id="output_format",
                     )
 
+        gr.Markdown(
+            "[Source code](https://github.com/BigBlackice/VoxBench)",
+            elem_classes=["source-link"],
+        )
+
         demo.load(fn=load_nano_model, outputs=model_state)
         if not ffmpeg_path:
             demo.load(
