@@ -142,10 +142,12 @@ def build_interface(
         assembly_button.click(
             fn=None,
             js="() => { window.open('/assemble/', '_blank', 'noopener'); }",
+            api_visibility="private",
         )
         document_button.click(
             fn=None,
             js="() => { window.open('/doc/', '_blank', 'noopener'); }",
+            api_visibility="private",
         )
 
         with gr.Row():
@@ -183,6 +185,7 @@ def build_interface(
                             inputs=[button, text],
                             outputs=text,
                             js=insert_tag_js,
+                            api_visibility="private",
                         )
 
                 audio_output = gr.Audio(
@@ -271,7 +274,7 @@ def build_interface(
             elem_classes=["source-link"],
         )
 
-        demo.load(fn=load_nano_model, outputs=model_state)
+        demo.load(fn=load_nano_model, outputs=model_state, api_visibility="private")
         if not ffmpeg_path:
             demo.load(
                 fn=None,
@@ -284,26 +287,31 @@ def build_interface(
                         });
                     }, 0);
                 }""",
+                api_visibility="private",
             )
         upload_file.upload(
             fn=route_drop_target,
             inputs=upload_file,
             outputs=[text, reference_audio, saved_reference, upload_file],
+            api_visibility="private",
         )
         reference_audio.input(
             fn=persist_reference_sample,
             inputs=reference_audio,
             outputs=saved_reference,
+            api_visibility="private",
         )
         saved_reference.input(
             fn=lambda file_path: file_path,
             inputs=saved_reference,
             outputs=reference_audio,
+            api_visibility="private",
         )
         persistent_storage.change(
             fn=lambda enabled: gr.update(visible=enabled),
             inputs=persistent_storage,
             outputs=output_directory,
+            api_visibility="private",
         )
         run_button.click(
             fn=generate,
@@ -325,6 +333,7 @@ def build_interface(
                 output_format,
             ],
             outputs=[model_state, audio_output],
+            api_name="generate",
         )
 
     return demo, custom_css

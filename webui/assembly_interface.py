@@ -409,21 +409,25 @@ def build_assembly_interface(
             fn=refresh_folder,
             inputs=[folder, batch_state],
             outputs=[folder, browser],
+            api_visibility="private",
         )
         folder.submit(
             fn=refresh_folder,
             inputs=[folder, batch_state],
             outputs=[folder, browser],
+            api_visibility="private",
         )
         browse_folder_button.click(
             fn=browse_folder,
             inputs=[folder, batch_state],
             outputs=[folder, browser],
+            api_visibility="private",
         )
         browser.input(
             fn=browser_input,
             inputs=[browser, folder, batch_state],
             outputs=[batch_state, batch_table, browser],
+            api_visibility="private",
         )
         browser.select(
             fn=browser_select,
@@ -439,6 +443,7 @@ def build_assembly_interface(
                 trim_end,
                 selected_batch_index,
             ],
+            api_visibility="private",
         )
         batch_table.select(
             fn=select_batch,
@@ -452,6 +457,7 @@ def build_assembly_interface(
                 trim_start,
                 trim_end,
             ],
+            api_visibility="private",
         )
         preview_button.click(
             fn=preview_changes,
@@ -465,6 +471,7 @@ def build_assembly_interface(
                 batch_equalize,
             ],
             outputs=preview,
+            api_visibility="private",
         )
         apply_button.click(
             fn=apply_item,
@@ -477,21 +484,25 @@ def build_assembly_interface(
                 trim_end,
             ],
             outputs=[batch_state, batch_table],
+            api_visibility="private",
         )
         move_up.click(
             fn=lambda batch, index: move_item(batch, index, -1),
             inputs=[batch_state, selected_batch_index],
             outputs=[batch_state, batch_table, selected_batch_index],
+            api_visibility="private",
         )
         move_down.click(
             fn=lambda batch, index: move_item(batch, index, 1),
             inputs=[batch_state, selected_batch_index],
             outputs=[batch_state, batch_table, selected_batch_index],
+            api_visibility="private",
         )
         remove.click(
             fn=remove_item,
             inputs=[batch_state, selected_batch_index, folder],
             outputs=[batch_state, batch_table, selected_batch_index, browser],
+            api_visibility="private",
         )
         assemble_button.click(
             fn=export,
@@ -505,6 +516,7 @@ def build_assembly_interface(
                 output_directory,
             ],
             outputs=[final_audio, final_download],
+            api_visibility="private",
         )
 
     return demo, custom_css

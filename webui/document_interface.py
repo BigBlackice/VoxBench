@@ -500,6 +500,7 @@ def build_document_interface(
         main_button.click(
             fn=None,
             js="() => { window.open('/', '_blank', 'noopener'); }",
+            api_visibility="private",
         )
         document_upload.upload(
             fn=import_file,
@@ -515,6 +516,7 @@ def build_document_interface(
                 document_upload,
                 replace_document,
             ],
+            api_visibility="private",
         )
         replace_document.click(
             fn=clear_and_show_document_upload,
@@ -530,6 +532,7 @@ def build_document_interface(
                 replace_document,
                 generated_audio,
             ],
+            api_visibility="private",
         )
         document_picker.change(
             fn=open_document,
@@ -544,16 +547,19 @@ def build_document_interface(
                 document_upload,
                 replace_document,
             ],
+            api_visibility="private",
         )
         outline.select(
             fn=select_outline,
             inputs=[document_state, outline],
             outputs=[active_section, section_title, editor, source_viewer],
+            api_visibility="private",
         )
         reorder_signal.input(
             fn=reorder_queue,
             inputs=[document_state, reorder_signal, outline],
             outputs=outline,
+            api_visibility="private",
         )
         save_button.click(
             fn=save_current,
@@ -565,6 +571,7 @@ def build_document_interface(
                 outline,
             ],
             outputs=outline,
+            api_visibility="private",
         )
         editor.blur(
             fn=autosave_current,
@@ -576,6 +583,7 @@ def build_document_interface(
                 outline,
             ],
             outputs=outline,
+            api_visibility="private",
         )
         section_title.blur(
             fn=autosave_current,
@@ -587,11 +595,13 @@ def build_document_interface(
                 outline,
             ],
             outputs=outline,
+            api_visibility="private",
         )
         restore_button.click(
             fn=restore_current,
             inputs=[document_state, active_section, outline],
             outputs=[editor, outline],
+            api_visibility="private",
         )
         insert_split.click(
             fn=None,
@@ -603,16 +613,19 @@ def build_document_interface(
                 const start = box.selectionStart;
                 return text.slice(0, start) + '\\n{SPLIT_MARKER}\\n' + text.slice(start);
             }}""",
+            api_visibility="private",
         )
         cleanup_button.click(
             fn=apply_cleanup,
             inputs=[editor, cleanup_operation],
             outputs=editor,
+            api_visibility="private",
         )
         headers_button.click(
             fn=clean_headers,
             inputs=[document_state, active_section, outline],
             outputs=[editor, outline],
+            api_visibility="private",
         )
         replace_button.click(
             fn=replace,
@@ -625,6 +638,7 @@ def build_document_interface(
                 outline,
             ],
             outputs=[editor, outline],
+            api_visibility="private",
         )
 
         structure_inputs = [
@@ -658,9 +672,14 @@ def build_document_interface(
                 ),
                 inputs=[*structure_inputs, outline],
                 outputs=structure_outputs,
+                api_visibility="private",
             )
 
-        demo.load(fn=None, js=read_asset("document_queue.js"))
+        demo.load(
+            fn=None,
+            js=read_asset("document_queue.js"),
+            api_visibility="private",
+        )
 
         synthesis_inputs = [
             document_state,
@@ -688,6 +707,7 @@ def build_document_interface(
                 fn=lambda *args, mode=mode: synthesize(mode, *args),
                 inputs=synthesis_inputs,
                 outputs=[outline, generated_audio],
+                api_visibility="private",
             )
 
     return demo, custom_css
