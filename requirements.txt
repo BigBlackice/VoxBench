@@ -5,6 +5,7 @@ gradio==6.8.0
 fastapi==0.139.2
 itsdangerous==2.2.0
 pypdf==6.6.2
+python-docx==1.2.0
 python-dotenv==1.1.1
 soundfile==0.14.0
 uvicorn==0.51.0

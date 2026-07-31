@@ -13,6 +13,7 @@ code is not copied into this repository.
 | Gradio | Apache-2.0 | <https://github.com/gradio-app/gradio> |
 | ItsDangerous | BSD-3-Clause | <https://github.com/pallets/itsdangerous> |
 | pypdf | BSD-3-Clause | <https://github.com/py-pdf/pypdf> |
+| python-docx | MIT | <https://github.com/python-openxml/python-docx> |
 | python-dotenv | BSD-3-Clause | <https://github.com/theskumar/python-dotenv> |
 | SoundFile | BSD-3-Clause | <https://github.com/bastibe/python-soundfile> |
 | Uvicorn | BSD-3-Clause | <https://github.com/Kludex/uvicorn> |

@@ -64,7 +64,7 @@ def build_document_interface(
 
     def import_file(file_path):
         if not file_path:
-            raise gr.Error("Upload a PDF or EPUB file.")
+            raise gr.Error("Upload a PDF, EPUB, or DOCX file.")
         document_id = import_document(file_path)
         return document_outputs(document_id)
 
@@ -406,8 +406,8 @@ def build_document_interface(
             with gr.Column(scale=1, min_width=420):
                 gr.Markdown("## Document viewer")
                 document_upload = gr.File(
-                    label="Drop or upload a PDF or EPUB",
-                    file_types=[".pdf", ".epub"],
+                    label="Drop or upload a PDF, EPUB, or DOCX",
+                    file_types=[".pdf", ".epub", ".docx"],
                     type="filepath",
                     height=760,
                     visible=not bool(initial_document),

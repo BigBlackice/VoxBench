@@ -11,14 +11,15 @@ from typing import Any
 import gradio as gr
 import soundfile as sf
 from bs4 import BeautifulSoup
-from pypdf import PdfReader
 
 from webui.config import OUTPUTS_DIR, PROJECT_DIR
+from webui.docx_reader import DocxError, read_docx_sections
 from webui.epub_reader import EpubError, read_epub_spine
+from webui.pdf_reader import PdfError, read_pdf_pages
 
 
 DOCUMENTS_DIR = PROJECT_DIR / "documents"
-SUPPORTED_DOCUMENT_EXTENSIONS = {".pdf", ".epub"}
+SUPPORTED_DOCUMENT_EXTENSIONS = {".docx", ".epub", ".pdf"}
 SPLIT_MARKER = "[[SPLIT HERE]]"
 SAFE_EPUB_TAGS = {
     "p",
@@ -154,18 +155,33 @@ def _safe_epub_html(content: bytes) -> tuple[str, str, str | None]:
 
 
 def _extract_pdf(source: Path) -> list[dict[str, Any]]:
-    reader = PdfReader(str(source))
-    sections = []
-    for index, page in enumerate(reader.pages, start=1):
-        text = _clean_extracted_text(page.extract_text() or "")
-        sections.append(
-            _new_section(
-                title=f"Page {index}",
-                text=text,
-                source_page=index,
-            )
+    try:
+        pages = read_pdf_pages(source)
+    except PdfError as error:
+        raise gr.Error(str(error)) from error
+    return [
+        _new_section(
+            title=f"Page {page.number}",
+            text=_clean_extracted_text(page.text),
+            source_page=page.number,
         )
-    return sections
+        for page in pages
+    ]
+
+
+def _extract_docx(source: Path) -> list[dict[str, Any]]:
+    try:
+        sections = read_docx_sections(source)
+    except DocxError as error:
+        raise gr.Error(str(error)) from error
+    return [
+        _new_section(
+            title=section.title,
+            text=_clean_extracted_text(section.text),
+            source_html=section.source_html,
+        )
+        for section in sections
+    ]
 
 
 def _extract_epub(source: Path) -> list[dict[str, Any]]:
@@ -193,7 +209,7 @@ def _extract_epub(source: Path) -> list[dict[str, Any]]:
 def import_document(file_path: str) -> str:
     source = Path(file_path).resolve()
     if not source.is_file() or source.suffix.lower() not in SUPPORTED_DOCUMENT_EXTENSIONS:
-        raise gr.Error("Upload a PDF or EPUB file.")
+        raise gr.Error("Upload a PDF, EPUB, or DOCX file.")
 
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     base = _safe_name(source.stem)
@@ -209,11 +225,12 @@ def import_document(file_path: str) -> str:
     shutil.copy2(source, stored_source)
 
     try:
-        sections = (
-            _extract_pdf(stored_source)
-            if source.suffix.lower() == ".pdf"
-            else _extract_epub(stored_source)
-        )
+        extractors = {
+            ".docx": _extract_docx,
+            ".epub": _extract_epub,
+            ".pdf": _extract_pdf,
+        }
+        sections = extractors[source.suffix.lower()](stored_source)
         if not sections:
             raise gr.Error("No readable text sections were found.")
         for section in sections:
@@ -315,7 +332,7 @@ def source_view_html(document_id: str, section: dict[str, Any]) -> str:
             'title="PDF source"></iframe>'
         )
     return (
-        '<article class="document-source-epub">'
+        '<article class="document-source-document">'
         f'{section.get("source_html") or "<p>No source preview available.</p>"}'
         "</article>"
     )

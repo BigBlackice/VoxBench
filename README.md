@@ -105,21 +105,22 @@ converted exports and chapter assembly are disabled. The interface links to the
 
 ## Document workspace
 
-The **Document workspace** button opens `/doc/` in a new browser tab. PDF and
-EPUB files are imported into local projects under `documents/`, which is
-excluded from Git.
+The **Document workspace** button opens `/doc/` in a new browser tab. PDF,
+EPUB, and DOCX files are imported into local projects under `documents/`,
+which is excluded from Git.
 
-The document viewer itself begins as a PDF/EPUB drag-and-drop or upload area,
-then changes into the source viewer after import. **Replace document** deletes
-all locally stored document source, extraction, edit, and status data before
+The document viewer itself begins as a drag-and-drop or upload area, then
+changes into the source viewer after import. **Replace document** deletes all
+locally stored document source, extraction, edit, and status data before
 returning the same panel to upload mode. Generated files under `outputs/` are
 not deleted. This keeps at most one imported document in project storage. The
-workspace places an editable text section beside its original PDF page or EPUB
-chapter. It provides section navigation, autosave, renaming, reordering,
-duplication, removal, merging, cursor-based splitting, search and replace,
-reversible cleanup, and restoration of the originally extracted text. PDF
-pages become initial sections; EPUB spine chapters retain their natural order.
-OCR is not performed.
+workspace places an editable text section beside its source preview. It
+provides section navigation, autosave, renaming, reordering, duplication,
+removal, merging, cursor-based splitting, search and replace, reversible
+cleanup, and restoration of the originally extracted text. PDF pages become
+initial sections, EPUB spine chapters retain their natural order, and DOCX
+documents are divided at heading paragraphs while preserving tables in
+document order. OCR is not performed.
 
 The synthesis section beneath the editor can generate the current section,
 checked sections, or the entire document. Documents are processed one section

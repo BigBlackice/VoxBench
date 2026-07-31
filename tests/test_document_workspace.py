@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from docx import Document
 from pypdf import PdfWriter
 
 from webui import document_workspace
@@ -58,6 +59,45 @@ def write_epub(path: Path) -> None:
 
 
 class DocumentWorkspaceTests(unittest.TestCase):
+    def test_imports_docx_headings_and_tables_as_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "sample.docx"
+            document = Document()
+            document.core_properties.title = "Sample document"
+            document.add_heading("Opening", level=1)
+            document.add_paragraph("Hello from Word.")
+            table = document.add_table(rows=1, cols=2)
+            table.cell(0, 0).text = "Speaker"
+            table.cell(0, 1).text = "Line"
+            document.add_heading("Closing", level=1)
+            document.add_paragraph("The end.")
+            document.save(source)
+
+            with patch.object(
+                document_workspace,
+                "DOCUMENTS_DIR",
+                root / "documents",
+            ):
+                document_id = document_workspace.import_document(str(source))
+                manifest = document_workspace.load_manifest(document_id)
+                self.assertEqual(manifest["source_type"], ".docx")
+                self.assertEqual(len(manifest["sections"]), 2)
+                first = document_workspace.load_section(
+                    document_id,
+                    manifest["sections"][0],
+                )
+                second = document_workspace.load_section(
+                    document_id,
+                    manifest["sections"][1],
+                )
+                self.assertEqual(first["title"], "Opening")
+                self.assertIn("Hello from Word.", first["text"])
+                self.assertIn("Speaker | Line", first["text"])
+                self.assertIn("<table>", first["source_html"])
+                self.assertEqual(second["title"], "Closing")
+                self.assertIn("The end.", second["text"])
+
     def test_imports_pdf_as_page_sections(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
