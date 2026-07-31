@@ -1,7 +1,6 @@
 # Pin the tested upstream revision because the PyPI wheel does not yet expose Nano.
 chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
 beautifulsoup4==4.14.3
-EbookLib==0.20
 gradio==6.8.0
 fastapi==0.139.2
 itsdangerous==2.2.0

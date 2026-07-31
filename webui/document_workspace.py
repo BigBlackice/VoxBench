@@ -11,10 +11,10 @@ from typing import Any
 import gradio as gr
 import soundfile as sf
 from bs4 import BeautifulSoup
-from ebooklib import epub
 from pypdf import PdfReader
 
 from webui.config import OUTPUTS_DIR, PROJECT_DIR
+from webui.epub_reader import EpubError, read_epub_spine
 
 
 DOCUMENTS_DIR = PROJECT_DIR / "documents"
@@ -169,21 +169,14 @@ def _extract_pdf(source: Path) -> list[dict[str, Any]]:
 
 
 def _extract_epub(source: Path) -> list[dict[str, Any]]:
-    book = epub.read_epub(str(source))
     sections = []
-    seen: set[str] = set()
+    try:
+        chapters = read_epub_spine(source)
+    except EpubError as error:
+        raise gr.Error(str(error)) from error
 
-    for idref, _ in book.spine:
-        item = book.get_item_with_id(idref)
-        if item is None or not hasattr(item, "get_content"):
-            continue
-        if isinstance(item, epub.EpubNav):
-            continue
-        item_name = item.get_name()
-        if item_name in seen:
-            continue
-        seen.add(item_name)
-        text, source_html, detected_title = _safe_epub_html(item.get_content())
+    for chapter in chapters:
+        text, source_html, detected_title = _safe_epub_html(chapter.content)
         if not text:
             continue
         title = detected_title or f"Chapter {len(sections) + 1}"

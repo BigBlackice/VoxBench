@@ -8,7 +8,7 @@ PyTorch build, falls back to CPU, and splits long text into sequential chunks.
 VoxBench is an independent project and is not affiliated with or endorsed by
 Resemble AI.
 
-> **Release status:** VoxBench v0.1.0 beta. Core workflows are functional, but
+> **Release status:** VoxBench v0.2.0 beta. Core workflows are functional, but
 > interfaces, configuration, and stored document formats may change before v1.0.
 
 ## Requirements
@@ -184,10 +184,7 @@ VoxBench listens on only `VOXBENCH_PORT` (7860 by default).
 
 ## License
 
-VoxBench is licensed under the
-[GNU Affero General Public License v3.0 or later](LICENSE). Users interacting
-with a modified version over a network must be offered the corresponding
-source code for that version.
+VoxBench is licensed under the [MIT License](LICENSE).
 
 Third-party components retain their own licenses. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and upstream

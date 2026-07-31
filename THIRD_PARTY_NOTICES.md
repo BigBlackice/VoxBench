@@ -9,7 +9,6 @@ code is not copied into this repository.
 | Chatterbox TTS | MIT | <https://github.com/resemble-ai/chatterbox> |
 | Chatterbox Nano model | MIT | <https://huggingface.co/ResembleAI/chatterbox-nano> |
 | Beautiful Soup | MIT | <https://www.crummy.com/software/BeautifulSoup/> |
-| EbookLib | AGPL-3.0-or-later | <https://github.com/aerkalov/ebooklib> |
 | FastAPI | MIT | <https://github.com/fastapi/fastapi> |
 | Gradio | Apache-2.0 | <https://github.com/gradio-app/gradio> |
 | ItsDangerous | BSD-3-Clause | <https://github.com/pallets/itsdangerous> |

@@ -1,13 +1,60 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
-from ebooklib import epub
 from pypdf import PdfWriter
 
 from webui import document_workspace
+
+
+def write_epub(path: Path) -> None:
+    container = """<?xml version="1.0"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="EPUB/package.opf"
+      media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"""
+    package = """<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"
+      properties="nav"/>
+    <item id="opening" href="chapters/opening.xhtml"
+      media-type="application/xhtml+xml"/>
+    <item id="second" href="chapters/second%20chapter.xhtml"
+      media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="nav"/>
+    <itemref idref="opening"/>
+    <itemref idref="second"/>
+  </spine>
+</package>"""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "mimetype",
+            "application/epub+zip",
+            compress_type=zipfile.ZIP_STORED,
+        )
+        archive.writestr("META-INF/container.xml", container)
+        archive.writestr("EPUB/package.opf", package)
+        archive.writestr(
+            "EPUB/nav.xhtml",
+            "<html><body><nav>Contents</nav></body></html>",
+        )
+        archive.writestr(
+            "EPUB/chapters/opening.xhtml",
+            "<html><body><h1>Opening</h1>"
+            "<p>Hello document world.</p><script>unsafe()</script></body></html>",
+        )
+        archive.writestr(
+            "EPUB/chapters/second chapter.xhtml",
+            "<html><body><h2>Next chapter</h2><p>Second section.</p></body></html>",
+        )
 
 
 class DocumentWorkspaceTests(unittest.TestCase):
@@ -41,24 +88,7 @@ class DocumentWorkspaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "sample.epub"
-            book = epub.EpubBook()
-            book.set_identifier("sample")
-            book.set_title("Sample")
-            book.set_language("en")
-            chapter = epub.EpubHtml(
-                title="Opening",
-                file_name="chapter.xhtml",
-                lang="en",
-            )
-            chapter.content = (
-                "<html><body><h1>Opening</h1>"
-                "<p>Hello document world.</p></body></html>"
-            )
-            book.add_item(chapter)
-            book.add_item(epub.EpubNcx())
-            book.add_item(epub.EpubNav())
-            book.spine = ["nav", chapter]
-            epub.write_epub(str(source), book)
+            write_epub(source)
 
             with patch.object(
                 document_workspace,
@@ -66,11 +96,21 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 root / "documents",
             ):
                 document_id = document_workspace.import_document(str(source))
-                section_id = document_workspace.first_section_id(document_id)
-                section = document_workspace.load_section(document_id, section_id)
-                self.assertEqual(section["title"], "Opening")
-                self.assertIn("Hello document world.", section["text"])
-                self.assertNotIn("<script", section["source_html"])
+                manifest = document_workspace.load_manifest(document_id)
+                self.assertEqual(len(manifest["sections"]), 2)
+                first = document_workspace.load_section(
+                    document_id,
+                    manifest["sections"][0],
+                )
+                second = document_workspace.load_section(
+                    document_id,
+                    manifest["sections"][1],
+                )
+                self.assertEqual(first["title"], "Opening")
+                self.assertIn("Hello document world.", first["text"])
+                self.assertNotIn("<script", first["source_html"])
+                self.assertEqual(second["title"], "Next chapter")
+                self.assertIn("Second section.", second["text"])
 
     def test_edit_restore_search_and_restructure(self):
         with tempfile.TemporaryDirectory() as directory:
