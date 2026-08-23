@@ -12,7 +12,7 @@ code is not copied into this repository.
 | FastAPI | MIT | <https://github.com/fastapi/fastapi> |
 | Gradio | Apache-2.0 | <https://github.com/gradio-app/gradio> |
 | ItsDangerous | BSD-3-Clause | <https://github.com/pallets/itsdangerous> |
-| pypdf | BSD-3-Clause | <https://github.com/py-pdf/pypdf> |
+| pypdfium2 / PDFium | Apache-2.0 OR BSD-3-Clause / BSD-style and bundled dependency licenses | <https://github.com/pypdfium2-team/pypdfium2> |
 | python-docx | MIT | <https://github.com/python-openxml/python-docx> |
 | python-dotenv | BSD-3-Clause | <https://github.com/theskumar/python-dotenv> |
 | SoundFile | BSD-3-Clause | <https://github.com/bastibe/python-soundfile> |

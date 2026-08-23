@@ -2,20 +2,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pypdf import PdfWriter
-
-from webui.pdf_reader import PdfError, read_pdf_pages
+from tests.pdf_fixture import write_blank_pdf
+from webui.pdf_reader import PdfError, normalize_pdf_text, read_pdf_pages
 
 
 class PdfReaderTests(unittest.TestCase):
+    def test_normalizes_standard_ligatures(self):
+        self.assertEqual(
+            normalize_pdf_text("oﬃce ﬂows speciﬁc ﬀ ﬄ ﬅ ﬆ"),
+            "office flows specific ff ffl st st",
+        )
+
     def test_preserves_page_numbers(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "pages.pdf"
-            writer = PdfWriter()
-            writer.add_blank_page(width=300, height=300)
-            writer.add_blank_page(width=300, height=300)
-            with source.open("wb") as output:
-                writer.write(output)
+            write_blank_pdf(source, page_count=2)
 
             pages = read_pdf_pages(source)
 

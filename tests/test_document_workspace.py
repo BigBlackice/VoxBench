@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import numpy as np
 from docx import Document
-from pypdf import PdfWriter
 
+from tests.pdf_fixture import write_blank_pdf
 from webui import document_workspace
 
 
@@ -102,11 +102,7 @@ class DocumentWorkspaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "sample.pdf"
-            writer = PdfWriter()
-            writer.add_blank_page(width=300, height=300)
-            writer.add_blank_page(width=300, height=300)
-            with source.open("wb") as output:
-                writer.write(output)
+            write_blank_pdf(source, page_count=2)
 
             with patch.object(
                 document_workspace,

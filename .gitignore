@@ -51,3 +51,6 @@ desktop.ini
 
 # Local planning notes
 todo.md
+
+# Local exploratory QA
+qa_tests/
