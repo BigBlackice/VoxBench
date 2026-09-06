@@ -59,6 +59,73 @@ def write_epub(path: Path) -> None:
 
 
 class DocumentWorkspaceTests(unittest.TestCase):
+    def test_selects_an_inclusive_pdf_page_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "page_range"
+                (documents / document_id).mkdir(parents=True)
+                sections = [
+                    document_workspace._new_section(
+                        f"Page {page}", f"Text {page}", source_page=page
+                    )
+                    for page in range(1, 6)
+                ]
+                for section in sections:
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "sections": [item["id"] for item in sections],
+                    }
+                )
+
+                selected = document_workspace.section_ids_in_page_range(
+                    document_id, 2, 4
+                )
+
+                self.assertEqual(selected, [item["id"] for item in sections[1:4]])
+
+    def test_applies_cleanup_to_selected_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "batch_cleanup"
+                (documents / document_id).mkdir(parents=True)
+                sections = [
+                    document_workspace._new_section("One", "First\nline"),
+                    document_workspace._new_section("Two", "Second\nline"),
+                ]
+                for section in sections:
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "sections": [item["id"] for item in sections],
+                    }
+                )
+
+                changed = document_workspace.apply_cleanup_to_sections(
+                    document_id,
+                    [sections[1]["id"]],
+                    "Join broken lines",
+                )
+
+                self.assertEqual(changed, 1)
+                self.assertEqual(
+                    document_workspace.load_section(document_id, sections[0]["id"])[
+                        "text"
+                    ],
+                    "First\nline",
+                )
+                self.assertEqual(
+                    document_workspace.load_section(document_id, sections[1]["id"])[
+                        "text"
+                    ],
+                    "Second line",
+                )
     def test_imports_docx_headings_and_tables_as_sections(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

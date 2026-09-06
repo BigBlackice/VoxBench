@@ -379,6 +379,47 @@ def clean_text(text: str, operation: str) -> str:
     raise gr.Error("Unknown cleanup operation.")
 
 
+def apply_cleanup_to_sections(
+    document_id: str,
+    section_ids: list[str],
+    operation: str,
+) -> int:
+    """Apply one cleanup operation to selected sections and save the result."""
+    if not section_ids:
+        raise gr.Error("Select at least one section.")
+    changed = 0
+    for section_id in section_ids:
+        section = load_section(document_id, section_id)
+        cleaned = clean_text(section["text"], operation)
+        if cleaned != section["text"]:
+            section["text"] = cleaned
+            section["status"] = "Needs review"
+            save_section(document_id, section)
+            changed += 1
+    return changed
+
+
+def section_ids_in_page_range(
+    document_id: str,
+    first_page: int,
+    last_page: int,
+) -> list[str]:
+    """Return PDF section IDs whose source pages fall in an inclusive range."""
+    if first_page < 1 or last_page < first_page:
+        raise gr.Error("Enter a valid page range, such as 300 to 500.")
+    manifest = load_manifest(document_id)
+    matches = [
+        section_id
+        for section_id in manifest["sections"]
+        if (page := load_section(document_id, section_id).get("source_page"))
+        is not None
+        and first_page <= page <= last_page
+    ]
+    if not matches:
+        raise gr.Error("No PDF pages were found in that range.")
+    return matches
+
+
 def remove_repeated_headers_footers(document_id: str) -> int:
     manifest = load_manifest(document_id)
     sections = [load_section(document_id, item) for item in manifest["sections"]]

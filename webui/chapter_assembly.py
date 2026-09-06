@@ -21,9 +21,14 @@ SPEECH_EQUALIZER_FILTER = (
 )
 
 
-def run_command(command: list[str]) -> subprocess.CompletedProcess[bytes]:
+def run_command(
+    command: list[str],
+    *,
+    cwd: str | Path | None = None,
+) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         command,
+        cwd=cwd,
         capture_output=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         check=False,
@@ -386,6 +391,38 @@ def _output_codec(extension: str) -> list[str]:
     raise gr.Error("Unsupported assembly format.")
 
 
+def _stage_audio_inputs(
+    batch: list[dict[str, Any]],
+    staging_dir: Path,
+) -> list[Path]:
+    """Expose source audio under short names for the final FFmpeg command."""
+    staged = []
+    for index, item in enumerate(batch):
+        source = validate_audio_path(item["path"])
+        target = staging_dir / f"{index:06d}{source.suffix.lower()}"
+        try:
+            target.hardlink_to(source)
+        except OSError:
+            try:
+                target.symlink_to(source)
+            except OSError:
+                shutil.copy2(source, target)
+        staged.append(target)
+    return staged
+
+
+def _temporary_assembly_directory(batch: list[dict[str, Any]]):
+    """Prefer the source drive so staging can use inexpensive hard links."""
+    source_directory = validate_audio_path(batch[0]["path"]).parent
+    try:
+        return tempfile.TemporaryDirectory(
+            prefix=".voxbench_assemble_",
+            dir=source_directory,
+        )
+    except OSError:
+        return tempfile.TemporaryDirectory(prefix="voxbench_assemble_")
+
+
 def assemble_chapters(
     batch: list[dict[str, Any]],
     transition_mode: str,
@@ -417,67 +454,66 @@ def assemble_chapters(
         )
         counter += 1
 
-    command = [ffmpeg_path, "-hide_banner", "-loglevel", "error"]
-    for item in batch:
-        command.extend(["-i", item["path"]])
+    with _temporary_assembly_directory(batch) as temporary_directory:
+        staging_dir = Path(temporary_directory)
+        staged_inputs = _stage_audio_inputs(batch, staging_dir)
+        command = [ffmpeg_path, "-hide_banner", "-loglevel", "error"]
+        for staged in staged_inputs:
+            command.extend(["-i", staged.name])
 
-    filter_parts = [
-        (
-            f"[{index}:a]"
-            f"{audio_filter(item, batch_volume_db, batch_equalize)}"
-            f"[a{index}]"
-        )
-        for index, item in enumerate(batch)
-    ]
-    interval_seconds = max(0, int(transition_ms)) / 1000
-    if len(batch) == 1:
-        final_label = "a0"
-    elif transition_mode == "Crossfade" and interval_seconds:
-        previous = "a0"
-        for index in range(1, len(batch)):
-            output = f"mix{index}"
-            filter_parts.append(
-                f"[{previous}][a{index}]acrossfade=d={interval_seconds:.6f}"
-                f":c1=tri:c2=tri[{output}]"
+        filter_parts = [
+            (
+                f"[{index}:a]"
+                f"{audio_filter(item, batch_volume_db, batch_equalize)}"
+                f"[a{index}]"
             )
-            previous = output
-        final_label = previous
-    else:
-        concat_inputs: list[str] = []
-        for index in range(len(batch)):
-            if index:
-                silence_label = f"silence{index}"
-                if interval_seconds:
-                    filter_parts.append(
-                        "anullsrc=r=48000:cl=stereo,"
-                        f"atrim=duration={interval_seconds:.6f}"
-                        f"[{silence_label}]"
-                    )
-                    concat_inputs.append(f"[{silence_label}]")
-            concat_inputs.append(f"[a{index}]")
-        final_label = "joined"
-        filter_parts.append(
-            f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}"
-            f":v=0:a=1[{final_label}]"
-        )
+            for index, item in enumerate(batch)
+        ]
+        interval_seconds = max(0, int(transition_ms)) / 1000
+        if len(batch) == 1:
+            final_label = "a0"
+        elif transition_mode == "Crossfade" and interval_seconds:
+            previous = "a0"
+            for index in range(1, len(batch)):
+                output = f"mix{index}"
+                filter_parts.append(
+                    f"[{previous}][a{index}]acrossfade=d={interval_seconds:.6f}"
+                    f":c1=tri:c2=tri[{output}]"
+                )
+                previous = output
+            final_label = previous
+        else:
+            concat_inputs: list[str] = []
+            for index in range(len(batch)):
+                if index:
+                    silence_label = f"silence{index}"
+                    if interval_seconds:
+                        filter_parts.append(
+                            "anullsrc=r=48000:cl=stereo,"
+                            f"atrim=duration={interval_seconds:.6f}"
+                            f"[{silence_label}]"
+                        )
+                        concat_inputs.append(f"[{silence_label}]")
+                concat_inputs.append(f"[a{index}]")
+            final_label = "joined"
+            filter_parts.append(
+                f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}"
+                f":v=0:a=1[{final_label}]"
+            )
 
-    with tempfile.NamedTemporaryFile(
-        prefix="chapters_",
-        suffix=".ffmeta",
-        delete=False,
-    ) as temporary_file:
-        metadata_path = Path(temporary_file.name)
-    try:
+        metadata_path = staging_dir / "chapters.ffmeta"
+        filter_path = staging_dir / "filters.txt"
         metadata_path.write_text(ffmetadata_text(chapters), encoding="utf-8")
+        filter_path.write_text(";".join(filter_parts), encoding="utf-8")
         metadata_input = len(batch)
         command.extend(
             [
                 "-f",
                 "ffmetadata",
                 "-i",
-                str(metadata_path),
-                "-filter_complex",
-                ";".join(filter_parts),
+                metadata_path.name,
+                "-filter_complex_script",
+                filter_path.name,
                 "-map",
                 f"[{final_label}]",
                 "-map_metadata",
@@ -487,9 +523,7 @@ def assemble_chapters(
                 str(target),
             ]
         )
-        result = run_command(command)
-    finally:
-        metadata_path.unlink(missing_ok=True)
+        result = run_command(command, cwd=staging_dir)
 
     if result.returncode:
         target.unlink(missing_ok=True)

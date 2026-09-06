@@ -103,6 +103,47 @@ class ChapterAssemblyTests(unittest.TestCase):
             self.assertEqual(command.call_args.args[0][0], "powershell.exe")
             self.assertIn("-STA", command.call_args.args[0])
 
+    def test_final_ffmpeg_command_uses_short_staged_input_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / ("very_long_chapter_name_" * 8 + ".wav")
+            source.write_bytes(b"test")
+            batch = [
+                {
+                    "path": str(source),
+                    "duration_ms": 1000,
+                    "volume_db": 0.0,
+                    "equalize": False,
+                    "trim_start_ms": 0,
+                    "trim_end_ms": 0,
+                }
+                for _ in range(100)
+            ]
+            completed = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"", stderr=b""
+            )
+
+            with patch(
+                "webui.chapter_assembly.run_command",
+                return_value=completed,
+            ) as run:
+                assemble_chapters(
+                    batch,
+                    "Silence",
+                    500,
+                    0,
+                    False,
+                    ".m4b",
+                    str(root),
+                    "ffmpeg",
+                )
+
+            command = run.call_args.args[0]
+            self.assertNotIn(str(source), command)
+            self.assertIn("000000.wav", command)
+            self.assertIn("-filter_complex_script", command)
+            self.assertLess(len(subprocess.list2cmdline(command)), 10_000)
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "FFmpeg and FFprobe are required",

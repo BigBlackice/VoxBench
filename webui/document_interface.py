@@ -4,6 +4,7 @@ from webui.audio_processing import join_audio_chunks
 from webui.config import read_asset
 from webui.document_workspace import (
     SPLIT_MARKER,
+    apply_cleanup_to_sections,
     clear_document_projects,
     clean_text,
     first_section_id,
@@ -22,8 +23,10 @@ from webui.document_workspace import (
     save_document_audio,
     save_editor_section,
     save_section,
+    section_ids_in_page_range,
     selected_section_ids,
 )
+from webui.generation_control import GenerationController
 from webui.model import generate_audio_chunk, load_model, set_seed
 from webui.text_processing import split_text
 from webui.themes import themed_styles
@@ -38,6 +41,7 @@ def build_document_interface(
     model_cache: dict,
 ) -> tuple[gr.Blocks, str]:
     custom_css = themed_styles()
+    generation_controller = GenerationController()
 
     def get_model():
         if model_cache.get("model") is not None:
@@ -149,6 +153,43 @@ def build_document_interface(
     def apply_cleanup(text, operation):
         return clean_text(text, operation)
 
+    def select_page_range(document_id, first_page, last_page):
+        if not document_id:
+            raise gr.Error("Open a PDF first.")
+        try:
+            first = int(first_page)
+            last = int(last_page)
+        except (TypeError, ValueError) as error:
+            raise gr.Error("Enter whole page numbers.") from error
+        selected = set(section_ids_in_page_range(document_id, first, last))
+        gr.Info(f"Selected {len(selected)} page(s).")
+        return outline_rows(document_id, selected)
+
+    def apply_cleanup_to_selected(
+        document_id,
+        section_id,
+        title,
+        text,
+        rows,
+        operation,
+    ):
+        save_editor_section(document_id, section_id, title, text)
+        selected = selected_section_ids(document_id, rows)
+        changed = apply_cleanup_to_sections(document_id, selected, operation)
+        current = load_section(document_id, section_id)
+        gr.Info(f"Updated {changed} selected section(s).")
+        return current["text"], outline_rows(document_id, set(selected))
+
+    def pause_generation():
+        if generation_controller.pause():
+            return "Generation status: pausing after the current chunk."
+        return "Generation status: no active generation."
+
+    def resume_generation():
+        if generation_controller.resume():
+            return "Generation status: running."
+        return "Generation status: no paused generation."
+
     def clean_headers(document_id, section_id, rows):
         changed = remove_repeated_headers_footers(document_id)
         section = load_section(document_id, section_id)
@@ -227,78 +268,89 @@ def build_document_interface(
             if not targets:
                 raise gr.Error("The document contains no text to synthesize.")
 
-        for target in targets:
-            queued = load_section(document_id, target)
-            queued["status"] = "Queued"
-            save_section(document_id, queued)
+        generation_controller.begin()
+        try:
+            for target in targets:
+                queued = load_section(document_id, target)
+                queued["status"] = "Queued"
+                save_section(document_id, queued)
 
-        if seed_num:
-            set_seed(int(seed_num))
-        model = get_model()
-        last_audio = None
-        failures: list[str] = []
+            if seed_num:
+                set_seed(int(seed_num))
+            model = get_model()
+            last_audio = None
+            failures: list[str] = []
 
-        for target_index, target in enumerate(targets, start=1):
-            section = load_section(document_id, target)
-            section["status"] = "Generating"
-            save_section(document_id, section)
-            chunks = split_text(section["text"], int(max_chunk_chars))
-            if not chunks:
-                section["status"] = "Failed"
-                save_section(document_id, section)
-                failures.append(section["title"])
-                continue
-
-            generated = []
-            try:
-                with model_cache["generation_lock"]:
-                    for chunk_index, chunk in enumerate(chunks, start=1):
-                        progress(
-                            (
-                                (target_index - 1)
-                                + (chunk_index - 1) / len(chunks)
-                            )
-                            / len(targets),
-                            desc=(
-                                f"{section['title']}: chunk "
-                                f"{chunk_index}/{len(chunks)}"
-                            ),
-                        )
-                        generated.append(
-                            generate_audio_chunk(
-                                model=model,
-                                text=chunk,
-                                audio_prompt_path=audio_prompt_path,
-                                temperature=temperature,
-                                min_p=min_p,
-                                top_p=top_p,
-                                top_k=int(top_k),
-                                repetition_penalty=repetition_penalty,
-                                norm_loudness=norm_loudness,
-                            )
-                        )
-                audio = join_audio_chunks(generated, model.sr, pause_ms)
-                last_audio = save_document_audio(
-                    document_id,
-                    target,
-                    audio,
-                    model.sr,
-                )
-            except Exception:
+            for target_index, target in enumerate(targets, start=1):
                 section = load_section(document_id, target)
-                section["status"] = "Failed"
+                section["status"] = "Generating"
                 save_section(document_id, section)
-                failures.append(section["title"])
+                chunks = split_text(section["text"], int(max_chunk_chars))
+                if not chunks:
+                    section["status"] = "Failed"
+                    save_section(document_id, section)
+                    failures.append(section["title"])
+                    continue
 
-        progress(1.0, desc="Document synthesis complete")
-        if failures:
-            gr.Warning("Failed: " + ", ".join(failures))
-        elif last_audio:
-            gr.Info(f"Generated {len(targets)} section(s).")
-        selected = set(selected_section_ids(document_id, rows))
-        return outline_rows(document_id, selected), (
-            str(last_audio) if last_audio else None
-        )
+                generated = []
+                try:
+                    with model_cache["generation_lock"]:
+                        for chunk_index, chunk in enumerate(chunks, start=1):
+                            if generation_controller.is_paused():
+                                section["status"] = "Paused"
+                                save_section(document_id, section)
+                                progress(0, desc="Generation paused")
+                            if generation_controller.wait_if_paused():
+                                section["status"] = "Generating"
+                                save_section(document_id, section)
+                            progress(
+                                (
+                                    (target_index - 1)
+                                    + (chunk_index - 1) / len(chunks)
+                                )
+                                / len(targets),
+                                desc=(
+                                    f"{section['title']}: chunk "
+                                    f"{chunk_index}/{len(chunks)}"
+                                ),
+                            )
+                            generated.append(
+                                generate_audio_chunk(
+                                    model=model,
+                                    text=chunk,
+                                    audio_prompt_path=audio_prompt_path,
+                                    temperature=temperature,
+                                    min_p=min_p,
+                                    top_p=top_p,
+                                    top_k=int(top_k),
+                                    repetition_penalty=repetition_penalty,
+                                    norm_loudness=norm_loudness,
+                                )
+                            )
+                    audio = join_audio_chunks(generated, model.sr, pause_ms)
+                    last_audio = save_document_audio(
+                        document_id,
+                        target,
+                        audio,
+                        model.sr,
+                    )
+                except Exception:
+                    section = load_section(document_id, target)
+                    section["status"] = "Failed"
+                    save_section(document_id, section)
+                    failures.append(section["title"])
+
+            progress(1.0, desc="Document synthesis complete")
+            if failures:
+                gr.Warning("Failed: " + ", ".join(failures))
+            elif last_audio:
+                gr.Info(f"Generated {len(targets)} section(s).")
+            selected = set(selected_section_ids(document_id, rows))
+            return outline_rows(document_id, selected), (
+                str(last_audio) if last_audio else None
+            )
+        finally:
+            generation_controller.finish()
 
     documents = list_documents()
     initial_document = documents[0][1] if documents else None
@@ -344,6 +396,10 @@ def build_document_interface(
                     wrap=True,
                     elem_id="document_outline",
                 )
+                with gr.Row():
+                    first_page = gr.Textbox(label="From page", placeholder="300")
+                    last_page = gr.Textbox(label="To page", placeholder="500")
+                    select_range_button = gr.Button("Select page range")
                 reorder_signal = gr.Textbox(
                     container=False,
                     elem_id="document_queue_order",
@@ -384,6 +440,7 @@ def build_document_interface(
                             label="Cleanup",
                         )
                         cleanup_button = gr.Button("Apply to editor")
+                        cleanup_selected_button = gr.Button("Apply to all sections")
                         headers_button = gr.Button("Remove repeated headers/footers")
                     with gr.Row():
                         duplicate = gr.Button("Duplicate")
@@ -496,6 +553,10 @@ def build_document_interface(
                     variant="primary",
                     elem_classes=["voxbench-button"],
                 )
+            with gr.Row():
+                pause_generation_button = gr.Button("Pause")
+                resume_generation_button = gr.Button("Resume")
+                generation_status = gr.Markdown("Generation status: idle.")
 
         main_button.click(
             fn=None,
@@ -553,6 +614,12 @@ def build_document_interface(
             fn=select_outline,
             inputs=[document_state, outline],
             outputs=[active_section, section_title, editor, source_viewer],
+            api_visibility="private",
+        )
+        select_range_button.click(
+            fn=select_page_range,
+            inputs=[document_state, first_page, last_page],
+            outputs=outline,
             api_visibility="private",
         )
         reorder_signal.input(
@@ -619,6 +686,19 @@ def build_document_interface(
             fn=apply_cleanup,
             inputs=[editor, cleanup_operation],
             outputs=editor,
+            api_visibility="private",
+        )
+        cleanup_selected_button.click(
+            fn=apply_cleanup_to_selected,
+            inputs=[
+                document_state,
+                active_section,
+                section_title,
+                editor,
+                outline,
+                cleanup_operation,
+            ],
+            outputs=[editor, outline],
             api_visibility="private",
         )
         headers_button.click(
@@ -709,5 +789,17 @@ def build_document_interface(
                 outputs=[outline, generated_audio],
                 api_visibility="private",
             )
+        pause_generation_button.click(
+            fn=pause_generation,
+            outputs=generation_status,
+            queue=False,
+            api_visibility="private",
+        )
+        resume_generation_button.click(
+            fn=resume_generation,
+            outputs=generation_status,
+            queue=False,
+            api_visibility="private",
+        )
 
     return demo, custom_css
