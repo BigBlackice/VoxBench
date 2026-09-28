@@ -6,16 +6,16 @@ import webbrowser
 from webui.config import MODEL_CACHE_DIR, PROJECT_DIR
 
 
-# Set the cache location before importing PyTorch, Gradio, or Hugging Face.
+# Keep application caches inside the project directory.
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
-import torch
 import uvicorn
 import gradio as gr
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from inference import create_inference_backend
 from webui.auth import (
     SharedAuthMiddleware,
     authenticate_login,
@@ -24,24 +24,12 @@ from webui.auth import (
 )
 
 
-def detect_device() -> tuple[str, str]:
-    """Choose the best accelerator exposed by the installed PyTorch build."""
-    if torch.cuda.is_available():
-        if getattr(torch.version, "hip", None):
-            return "cuda", "AMD ROCm"
-        return "cuda", "NVIDIA CUDA"
-
-    mps_backend = getattr(torch.backends, "mps", None)
-    if mps_backend is not None and mps_backend.is_available():
-        return "mps", "Apple Metal (MPS)"
-
-    return "cpu", "CPU"
-
-
-DEVICE, DEVICE_LABEL = detect_device()
+AUTH_SETTINGS = load_auth_settings()
+MODEL_BACKEND = create_inference_backend()
+DEVICE = "service"
+DEVICE_LABEL = MODEL_BACKEND.label
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
-AUTH_SETTINGS = load_auth_settings()
 
 from webui.assembly_interface import build_assembly_interface
 from webui.document_interface import build_document_interface
@@ -50,7 +38,7 @@ from webui.interface import build_interface
 
 
 MODEL_CACHE = {
-    "model": None,
+    "model": MODEL_BACKEND,
     "load_lock": threading.Lock(),
     "generation_lock": threading.Lock(),
 }

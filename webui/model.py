@@ -1,23 +1,16 @@
-import random
+"""Compatibility helpers that route UI synthesis through an inference backend."""
 
-import numpy as np
-import torch
-from chatterbox.tts_turbo import ChatterboxTurboTTS
-
-
-def set_seed(seed: int) -> None:
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
+from inference.client import create_inference_backend
+from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
 
 
-def load_model(device: str, device_label: str) -> ChatterboxTurboTTS:
-    print(f"Loading Chatterbox-Nano with {device_label} ({device})...")
-    return ChatterboxTurboTTS.from_pretrained(device=device, nano=True)
+def load_model(device: str = "", device_label: str = "") -> InferenceBackend:
+    """Return the configured service/provider client; no model loads in the app."""
+    return create_inference_backend()
 
 
 def generate_audio_chunk(
-    model: ChatterboxTurboTTS,
+    model: InferenceBackend,
     text: str,
     audio_prompt_path: str | None,
     temperature: float,
@@ -26,15 +19,18 @@ def generate_audio_chunk(
     top_k: int,
     repetition_penalty: float,
     norm_loudness: bool,
-) -> torch.Tensor:
-    wav = model.generate(
-        text,
-        audio_prompt_path=audio_prompt_path,
-        temperature=temperature,
-        min_p=min_p,
-        top_p=top_p,
-        top_k=top_k,
-        repetition_penalty=repetition_penalty,
-        norm_loudness=norm_loudness,
+    seed: int = 0,
+) -> AudioResult:
+    return model.synthesize(
+        SynthesisRequest(
+            text=text,
+            audio_prompt_path=audio_prompt_path,
+            temperature=temperature,
+            seed=seed,
+            min_p=min_p,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            norm_loudness=norm_loudness,
+        )
     )
-    return wav.squeeze(0).detach().cpu().float()

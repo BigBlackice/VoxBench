@@ -1,0 +1,7 @@
+# Pin the tested upstream revision because the PyPI wheel does not yet expose Nano.
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
+fastapi==0.139.2
+numpy==1.26.4
+python-dotenv==1.1.1
+soundfile==0.14.0
+uvicorn==0.51.0

@@ -1,18 +1,18 @@
-import torch
+import numpy as np
 
 
 def join_audio_chunks(
-    audio_chunks: list[torch.Tensor],
+    audio_chunks: list[np.ndarray],
     sample_rate: int,
     pause_ms: float,
-) -> torch.Tensor:
+) -> np.ndarray:
     """Join generated audio chunks with a fixed silence interval."""
-    silence = torch.zeros(round(sample_rate * float(pause_ms) / 1000.0))
-    joined: list[torch.Tensor] = []
-
+    if not audio_chunks:
+        return np.empty(0, dtype=np.float32)
+    silence = np.zeros(round(sample_rate * float(pause_ms) / 1000.0), dtype=np.float32)
+    joined: list[np.ndarray] = []
     for index, audio_chunk in enumerate(audio_chunks):
-        if index and silence.numel():
+        if index and silence.size:
             joined.append(silence)
-        joined.append(audio_chunk)
-
-    return torch.cat(joined)
+        joined.append(np.asarray(audio_chunk, dtype=np.float32))
+    return np.concatenate(joined)

@@ -1,9 +1,10 @@
 # VoxBench
 
 VoxBench is a self-hosted workspace for generating, reviewing, organizing, and
-assembling speech with Resemble AI's Chatterbox Nano model. It automatically
-selects NVIDIA CUDA, AMD ROCm, or Apple Metal when supported by the installed
-PyTorch build, falls back to CPU, and splits long text into sequential chunks.
+assembling speech with Resemble AI's Chatterbox Nano model. The application and
+model run as separate services, even on one machine. The model service selects
+NVIDIA CUDA, AMD ROCm, or Apple Metal when supported by PyTorch, falls back to
+CPU, and returns generated audio to the application for local processing.
 
 VoxBench is an independent project and is not affiliated with or endorsed by
 Resemble AI.
@@ -20,8 +21,9 @@ Resemble AI.
 
 The virtual environment and downloaded model cache are intentionally local and
 excluded from Git. Each operating system creates its own compatible copies.
-All required Python packages, including the FastAPI/Uvicorn HTTP stack, are
-installed from the baseline `requirements.txt`.
+The shared installation uses `requirements.txt`. Application-only and
+model-only installations use their respective requirement files and virtual
+environments, so an application host does not need PyTorch or Chatterbox.
 
 ## Install and run
 
@@ -45,9 +47,59 @@ chmod +x run.sh
 ./run.sh
 ```
 
-Both launchers create a local `.venv` using Python 3.11 when needed, install
-the pinned dependencies, and start VoxBench at <http://127.0.0.1:7860>. Model
-weights are downloaded to `.cache/huggingface` on first launch.
+Both launchers create a local `.venv` using Python 3.11 when needed and install
+the pinned dependencies. They start the model service on `127.0.0.1:7861`, wait
+for it to become ready, then start the application at
+<http://127.0.0.1:7860>. The two processes are connected automatically. Model
+weights are downloaded to `.cache/huggingface` on first synthesis.
+
+### Deployment modes
+
+The normal `run.bat` or `run.sh` command is the shared local deployment. It
+still uses the split architecture but manages both processes as one convenient
+launch. Closing it stops both services.
+
+To host only the model service, use `run-model.bat` or `run-model.sh`. This uses
+`.venv-model` and installs `requirements-model.txt`. For access from another
+machine, configure a private `.env` on the model host:
+
+```dotenv
+VOXBENCH_MODEL_HOST=0.0.0.0
+VOXBENCH_MODEL_PORT=7861
+VOXBENCH_MODEL_API_KEY=a-long-random-secret
+```
+
+The service refuses non-loopback binding without an API key. Use TLS through a
+trusted reverse proxy or keep the endpoint on a trusted private network; the
+built-in Uvicorn listener does not provide HTTPS.
+
+To run only the application, use `run-app.bat` or `run-app.sh`. This creates
+`.venv-app`, installs only `requirements-app.txt`, and does not install, load,
+or launch Chatterbox or PyTorch. Configure its `.env` to use the model host:
+
+```dotenv
+VOXBENCH_INFERENCE_MODE=service
+VOXBENCH_MODEL_URL=http://model-host:7861
+VOXBENCH_MODEL_API_KEY=the-same-secret
+```
+
+The application performs document parsing, cleanup, chunking, file storage,
+chapter metadata, FFmpeg conversion, and audiobook assembly. The model service
+receives only prepared text chunks, synthesis settings, optional reference
+audio, and returns WAV audio. Source documents are never sent to it.
+
+A generic hosted-provider adapter is also available in code for the future UI:
+
+```dotenv
+VOXBENCH_INFERENCE_MODE=provider
+VOXBENCH_PROVIDER_URL=https://provider.example/v1/tts
+VOXBENCH_PROVIDER_API_KEY=provider-secret
+VOXBENCH_PROVIDER_MODEL=model-name
+```
+
+Provider APIs differ, so concrete providers can subclass or replace the generic
+JSON adapter. Provider selection is intentionally not exposed in the current
+Gradio interface; the upcoming UI will add capability-aware configuration.
 
 ## Reference samples
 

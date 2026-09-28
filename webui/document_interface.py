@@ -27,7 +27,7 @@ from webui.document_workspace import (
     selected_section_ids,
 )
 from webui.generation_control import GenerationController
-from webui.model import generate_audio_chunk, load_model, set_seed
+from webui.model import generate_audio_chunk, load_model
 from webui.text_processing import split_text
 from webui.themes import themed_styles
 
@@ -275,11 +275,10 @@ def build_document_interface(
                 queued["status"] = "Queued"
                 save_section(document_id, queued)
 
-            if seed_num:
-                set_seed(int(seed_num))
             model = get_model()
             last_audio = None
             failures: list[str] = []
+            seed_offset = 0
 
             for target_index, target in enumerate(targets, start=1):
                 section = load_section(document_id, target)
@@ -293,6 +292,7 @@ def build_document_interface(
                     continue
 
                 generated = []
+                sample_rate = model.sample_rate
                 try:
                     with model_cache["generation_lock"]:
                         for chunk_index, chunk in enumerate(chunks, start=1):
@@ -314,8 +314,7 @@ def build_document_interface(
                                     f"{chunk_index}/{len(chunks)}"
                                 ),
                             )
-                            generated.append(
-                                generate_audio_chunk(
+                            result = generate_audio_chunk(
                                     model=model,
                                     text=chunk,
                                     audio_prompt_path=audio_prompt_path,
@@ -325,14 +324,23 @@ def build_document_interface(
                                     top_k=int(top_k),
                                     repetition_penalty=repetition_penalty,
                                     norm_loudness=norm_loudness,
+                                    seed=(int(seed_num) + seed_offset)
+                                    if seed_num
+                                    else 0,
                                 )
-                            )
-                    audio = join_audio_chunks(generated, model.sr, pause_ms)
+                            seed_offset += 1
+                            if generated and result.sample_rate != sample_rate:
+                                raise gr.Error(
+                                    "The inference sample rate changed between chunks."
+                                )
+                            sample_rate = result.sample_rate
+                            generated.append(result.samples)
+                    audio = join_audio_chunks(generated, sample_rate, pause_ms)
                     last_audio = save_document_audio(
                         document_id,
                         target,
                         audio,
-                        model.sr,
+                        sample_rate,
                     )
                 except Exception:
                     section = load_section(document_id, target)

@@ -10,7 +10,7 @@ from webui.config import (
     TEXT_FILE_EXTENSIONS,
     read_asset,
 )
-from webui.model import generate_audio_chunk, load_model, set_seed
+from webui.model import generate_audio_chunk, load_model
 from webui.storage import (
     list_reference_samples,
     route_uploaded_file,
@@ -87,11 +87,9 @@ def build_interface(
         if model is None:
             model = load_nano_model()
 
-        if seed_num:
-            set_seed(int(seed_num))
-
         chunks = split_text(text, int(max_chunk_chars))
         generated = []
+        sample_rate = model.sample_rate
 
         generation_context = (
             model_cache["generation_lock"] if model_cache else nullcontext()
@@ -102,8 +100,7 @@ def build_interface(
                     (index - 1) / len(chunks),
                     desc=f"Generating chunk {index} of {len(chunks)}",
                 )
-                generated.append(
-                    generate_audio_chunk(
+                result = generate_audio_chunk(
                         model=model,
                         text=chunk,
                         audio_prompt_path=audio_prompt_path,
@@ -113,16 +110,20 @@ def build_interface(
                         top_k=int(top_k),
                         repetition_penalty=repetition_penalty,
                         norm_loudness=norm_loudness,
+                        seed=(int(seed_num) + index - 1) if seed_num else 0,
                     )
-                )
+                if generated and result.sample_rate != sample_rate:
+                    raise gr.Error("The inference sample rate changed between chunks.")
+                sample_rate = result.sample_rate
+                generated.append(result.samples)
 
         progress(1.0, desc="Joining audio")
-        audio = join_audio_chunks(generated, model.sr, pause_ms)
-        audio_result = (model.sr, audio.numpy())
+        audio = join_audio_chunks(generated, sample_rate, pause_ms)
+        audio_result = (sample_rate, audio)
         if persistent_storage:
             saved_path = save_generated_audio(
                 audio,
-                model.sr,
+                sample_rate,
                 text,
                 output_directory,
                 output_format,

@@ -1,5 +1,7 @@
 # Per-machine Python environments
 .venv/
+.venv-app/
+.venv-model/
 venv/
 env/
 

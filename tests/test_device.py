@@ -1,11 +1,11 @@
 import unittest
 
-import app
+from model_service.runtime import detect_device
 
 
 class DeviceDetectionTests(unittest.TestCase):
     def test_detected_device_is_supported(self):
-        device, label = app.detect_device()
+        device, label = detect_device()
 
         self.assertIn(device, {"cuda", "mps", "cpu"})
         self.assertTrue(label)
