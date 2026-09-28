@@ -1,74 +1,44 @@
+"""Run the VoxBench NiceGUI application.
+
+The app process owns uploads, documents, audio files, and FFmpeg.  It connects
+to the model service through the framework-independent inference interface.
+"""
+
 import os
 import shutil
-import threading
-import webbrowser
 
-from webui.config import MODEL_CACHE_DIR, PROJECT_DIR
-
-
-# Keep application caches inside the project directory.
-os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
-
-import uvicorn
-import gradio as gr
-from fastapi import FastAPI, Request
+from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
+from nicegui import app, ui
 from starlette.middleware.sessions import SessionMiddleware
 
-from inference import create_inference_backend
 from webui.auth import (
     SharedAuthMiddleware,
     authenticate_login,
     load_auth_settings,
     login_page,
 )
+from webui.config import MODEL_CACHE_DIR, OUTPUTS_DIR
+from webui.app_config import ModelConnection, ModelConnectionSettings
+from webui.document_workspace import document_source_path
+from webui.errors import VoxBenchError
+from webui.nicegui_interface import build_interface
+from webui.themes import themed_styles
 
+
+os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
 AUTH_SETTINGS = load_auth_settings()
-MODEL_BACKEND = create_inference_backend()
-DEVICE = "service"
-DEVICE_LABEL = MODEL_BACKEND.label
+SHARED_LOCAL_MODE = os.getenv("VOXBENCH_SHARED_LOCAL_MODE") == "1"
+MODEL_CONNECTION = ModelConnection(
+    ModelConnectionSettings() if SHARED_LOCAL_MODE else None
+)
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
 
-from webui.assembly_interface import build_assembly_interface
-from webui.document_interface import build_document_interface
-from webui.document_workspace import document_source_path
-from webui.interface import build_interface
-
-
-MODEL_CACHE = {
-    "model": MODEL_BACKEND,
-    "load_lock": threading.Lock(),
-    "generation_lock": threading.Lock(),
-}
-
-demo, CUSTOM_CSS = build_interface(
-    DEVICE,
-    DEVICE_LABEL,
-    FFMPEG_PATH,
-    MODEL_CACHE,
-)
-assembly_demo, ASSEMBLY_CSS = build_assembly_interface(
-    FFMPEG_PATH,
-    FFPROBE_PATH,
-)
-document_demo, DOCUMENT_CSS = build_document_interface(
-    DEVICE,
-    DEVICE_LABEL,
-    MODEL_CACHE,
-)
-
-demo.queue(max_size=10, default_concurrency_limit=1)
-assembly_demo.queue(max_size=10, default_concurrency_limit=1)
-document_demo.queue(max_size=10, default_concurrency_limit=1)
-
-web_app = FastAPI()
-
-
 if AUTH_SETTINGS.enabled:
-    web_app.add_middleware(SharedAuthMiddleware)
-    web_app.add_middleware(
+    app.add_middleware(SharedAuthMiddleware)
+    app.add_middleware(
         SessionMiddleware,
         secret_key=AUTH_SETTINGS.session_secret,
         session_cookie="voxbench_session",
@@ -78,87 +48,58 @@ if AUTH_SETTINGS.enabled:
     )
 
 
-@web_app.get("/login", include_in_schema=False)
+@app.get("/login", include_in_schema=False)
 def show_login(next: str = "/"):
     if not AUTH_SETTINGS.enabled:
         return RedirectResponse("/")
     return login_page(next)
 
 
-@web_app.post("/login", include_in_schema=False)
+@app.post("/login", include_in_schema=False)
 async def submit_login(request: Request):
     if not AUTH_SETTINGS.enabled:
         return RedirectResponse("/")
     return await authenticate_login(request, AUTH_SETTINGS)
 
 
-@web_app.get("/logout", include_in_schema=False)
+@app.get("/logout", include_in_schema=False)
 def logout(request: Request):
     if AUTH_SETTINGS.enabled:
         request.session.clear()
     return RedirectResponse("/login", status_code=303)
 
 
-@web_app.get("/assemble", include_in_schema=False)
-def redirect_to_assembly() -> RedirectResponse:
-    return RedirectResponse("/assemble/")
-
-
-@web_app.get("/doc", include_in_schema=False)
-def redirect_to_documents() -> RedirectResponse:
-    return RedirectResponse("/doc/")
-
-
-@web_app.get("/document-source/{document_id}", include_in_schema=False)
+@app.get("/document-source/{document_id}", include_in_schema=False)
 def serve_document_source(document_id: str) -> FileResponse:
     try:
         path = document_source_path(document_id)
-    except (FileNotFoundError, gr.Error):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404)
+    except (FileNotFoundError, VoxBenchError) as error:
+        raise HTTPException(status_code=404) from error
     return FileResponse(path)
 
 
-web_app = gr.mount_gradio_app(
-    web_app,
-    document_demo,
-    path="/doc",
-    server_name=AUTH_SETTINGS.host,
-    server_port=AUTH_SETTINGS.port,
-    css=DOCUMENT_CSS,
-    allowed_paths=[str(PROJECT_DIR)],
-)
-web_app = gr.mount_gradio_app(
-    web_app,
-    assembly_demo,
-    path="/assemble",
-    server_name=AUTH_SETTINGS.host,
-    server_port=AUTH_SETTINGS.port,
-    css=ASSEMBLY_CSS,
-    allowed_paths=[str(PROJECT_DIR)],
-)
-web_app = gr.mount_gradio_app(
-    web_app,
-    demo,
-    path="/",
-    server_name=AUTH_SETTINGS.host,
-    server_port=AUTH_SETTINGS.port,
-    css=CUSTOM_CSS,
-    allowed_paths=[str(PROJECT_DIR)],
-)
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+app.add_static_files("/outputs", OUTPUTS_DIR, max_cache_age=0)
+
+
+@ui.page("/")
+def index() -> None:
+    ui.add_head_html(f"<style>{themed_styles()}</style>")
+    ui.dark_mode().enable()
+    build_interface(
+        model_connection=MODEL_CONNECTION,
+        ffmpeg_path=FFMPEG_PATH,
+        ffprobe_path=FFPROBE_PATH,
+    )
 
 
 def main() -> None:
-    local_url = f"http://127.0.0.1:{AUTH_SETTINGS.port}"
-    threading.Timer(
-        1.0,
-        lambda: webbrowser.open(local_url),
-    ).start()
-    uvicorn.run(
-        web_app,
+    ui.run(
         host=AUTH_SETTINGS.host,
         port=AUTH_SETTINGS.port,
+        title="VoxBench",
+        show=False,
+        reload=False,
     )
 
 

@@ -6,7 +6,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-import gradio as gr
+from webui.errors import VoxBenchError
 import soundfile as sf
 
 from webui.config import (
@@ -15,6 +15,7 @@ from webui.config import (
     OUTPUT_FORMATS,
     OUTPUTS_DIR,
     PROJECT_DIR,
+    REFERENCE_AUDIO_DIR,
     SAMPLES_DIR,
     TEXT_FILE_EXTENSIONS,
 )
@@ -37,11 +38,11 @@ def load_text_file(file_path: str | None) -> str:
 
     path = Path(file_path)
     if path.suffix.lower() not in TEXT_FILE_EXTENSIONS:
-        raise gr.Error("Please upload a .txt, .text, or .md file.")
+        raise VoxBenchError("Please upload a .txt, .text, or .md file.")
 
     data = path.read_bytes()
     if len(data) > MAX_TEXT_FILE_BYTES:
-        raise gr.Error("Text files must be 5 MB or smaller.")
+        raise VoxBenchError("Text files must be 5 MB or smaller.")
 
     encodings = ["utf-8-sig"]
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
@@ -53,7 +54,7 @@ def load_text_file(file_path: str | None) -> str:
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise gr.Error("The text file encoding could not be recognized.")
+    raise VoxBenchError("The text file encoding could not be recognized.")
 
 
 def route_uploaded_file(
@@ -69,7 +70,7 @@ def route_uploaded_file(
         return "text", load_text_file(file_path)
     if suffix in AUDIO_FILE_EXTENSIONS:
         return "audio", save_reference_sample(file_path, samples_dir)
-    raise gr.Error("Please upload a supported text or audio file.")
+    raise VoxBenchError("Please upload a supported text or audio file.")
 
 
 def sanitize_sample_filename(filename: str) -> str:
@@ -77,7 +78,7 @@ def sanitize_sample_filename(filename: str) -> str:
     path = Path(filename)
     suffix = path.suffix.lower()
     if suffix not in AUDIO_FILE_EXTENSIONS:
-        raise gr.Error("Unsupported reference-audio file type.")
+        raise VoxBenchError("Unsupported reference-audio file type.")
 
     stem = unicodedata.normalize("NFKC", path.stem)
     stem = re.sub(r"[^\w.-]+", "_", stem, flags=re.UNICODE).strip(" ._-")
@@ -90,7 +91,7 @@ def sanitize_sample_filename(filename: str) -> str:
 def list_reference_samples(
     samples_dir: Path = SAMPLES_DIR,
 ) -> list[tuple[str, str]]:
-    """Return saved samples as display-name/path pairs for a Gradio dropdown."""
+    """Return saved samples as display-name/path pairs for any UI selector."""
     if not samples_dir.is_dir():
         return []
 
@@ -99,6 +100,12 @@ def list_reference_samples(
         for path in sorted(samples_dir.iterdir(), key=lambda item: item.name.casefold())
         if path.is_file() and path.suffix.lower() in AUDIO_FILE_EXTENSIONS
     ]
+
+
+def default_reference_sample(samples_dir: Path = SAMPLES_DIR) -> Path | None:
+    """Return the first bundled reference sample, if the project includes one."""
+    samples = list_reference_samples(samples_dir)
+    return Path(samples[0][1]) if samples else None
 
 
 def save_reference_sample(
@@ -111,7 +118,7 @@ def save_reference_sample(
 
     source = Path(file_path).resolve()
     if not source.is_file():
-        raise gr.Error("The reference-audio file could not be found.")
+        raise VoxBenchError("The reference-audio file could not be found.")
 
     samples_dir.mkdir(parents=True, exist_ok=True)
     samples_dir = samples_dir.resolve()
@@ -136,6 +143,29 @@ def save_reference_sample(
     return target
 
 
+def clear_uploaded_reference_audio(
+    reference_audio_dir: Path = REFERENCE_AUDIO_DIR,
+) -> None:
+    """Remove the transient user-uploaded reference-audio workspace."""
+    directory = reference_audio_dir.resolve()
+    if not directory.exists():
+        return
+    if not directory.is_dir():
+        raise VoxBenchError("The reference-audio workspace is not a folder.")
+    shutil.rmtree(directory)
+
+
+def replace_uploaded_reference_audio(
+    file_path: str | None,
+    reference_audio_dir: Path = REFERENCE_AUDIO_DIR,
+) -> Path | None:
+    """Replace the transient uploaded reference clip with one new file."""
+    if not file_path:
+        return None
+    clear_uploaded_reference_audio(reference_audio_dir)
+    return save_reference_sample(file_path, reference_audio_dir)
+
+
 def resolve_output_directory(directory: str | None) -> Path:
     """Resolve a user-provided output directory relative to the project root."""
     if not directory or not directory.strip():
@@ -154,7 +184,7 @@ def generated_audio_filename(
 ) -> str:
     """Create a readable filename from the generation time and prompt text."""
     if extension not in OUTPUT_FORMATS:
-        raise gr.Error("Unsupported output format.")
+        raise VoxBenchError("Unsupported output format.")
     created_at = created_at or datetime.now()
     prompt = re.sub(r"\[[^\]]+\]", "", text)
     prompt = unicodedata.normalize("NFKC", prompt)
@@ -206,7 +236,7 @@ def _encode_with_ffmpeg(
     if result.returncode:
         target.unlink(missing_ok=True)
         detail = result.stderr.decode(errors="replace").strip()
-        raise gr.Error(f"FFmpeg could not export {extension}: {detail}")
+        raise VoxBenchError(f"FFmpeg could not export {extension}: {detail}")
 
 
 def save_generated_audio(
@@ -219,14 +249,14 @@ def save_generated_audio(
 ) -> Path:
     """Save generated audio in the selected format without retaining intermediates."""
     if output_format not in OUTPUT_FORMATS:
-        raise gr.Error("Unsupported output format.")
+        raise VoxBenchError("Unsupported output format.")
     if output_format != ".wav" and not ffmpeg_path:
-        raise gr.Error("FFmpeg is required for this output format.")
+        raise VoxBenchError("FFmpeg is required for this output format.")
     output_dir = resolve_output_directory(directory)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise gr.Error(f"Could not create output folder: {error}") from error
+        raise VoxBenchError(f"Could not create output folder: {error}") from error
 
     filename = generated_audio_filename(text, extension=output_format)
     target = output_dir / filename
@@ -248,5 +278,5 @@ def save_generated_audio(
                 ffmpeg_path,
             )
     except (OSError, RuntimeError) as error:
-        raise gr.Error(f"Could not save generated audio: {error}") from error
+        raise VoxBenchError(f"Could not save generated audio: {error}") from error
     return target

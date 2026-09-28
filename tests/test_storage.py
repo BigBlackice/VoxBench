@@ -3,18 +3,21 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
-import gradio as gr
 import numpy as np
 import soundfile as sf
 
 from webui.storage import (
+    clear_uploaded_reference_audio,
+    default_reference_sample,
     generated_audio_filename,
     list_reference_samples,
     route_uploaded_file,
     sanitize_sample_filename,
     save_generated_audio,
     save_reference_sample,
+    replace_uploaded_reference_audio,
 )
+from webui.errors import VoxBenchError
 
 
 class ReferenceSampleStorageTests(unittest.TestCase):
@@ -41,6 +44,32 @@ class ReferenceSampleStorageTests(unittest.TestCase):
             self.assertEqual(first_saved.name, "Voice_clip.wav")
             self.assertEqual(second_saved.name, "Voice_clip_2.wav")
             self.assertEqual(len(list_reference_samples(samples_dir)), 2)
+
+    def test_replaces_transient_uploaded_reference_audio(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first_source = root / "first.wav"
+            second_source = root / "second.wav"
+            reference_audio_dir = root / "reference_audio"
+            first_source.write_bytes(b"first recording")
+            second_source.write_bytes(b"second recording")
+
+            first_saved = replace_uploaded_reference_audio(str(first_source), reference_audio_dir)
+            second_saved = replace_uploaded_reference_audio(str(second_source), reference_audio_dir)
+
+            self.assertFalse(first_saved.exists())
+            self.assertTrue(second_saved.is_file())
+            self.assertEqual(list(reference_audio_dir.iterdir()), [second_saved])
+            clear_uploaded_reference_audio(reference_audio_dir)
+            self.assertFalse(reference_audio_dir.exists())
+
+    def test_uses_first_bundled_reference_sample(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            samples_dir = Path(temporary_directory)
+            (samples_dir / "Zebra.wav").write_bytes(b"zebra")
+            (samples_dir / "alpha.mp3").write_bytes(b"alpha")
+
+            self.assertEqual(default_reference_sample(samples_dir).name, "alpha.mp3")
 
     def test_generated_filename_is_readable(self):
         filename = generated_audio_filename(
@@ -96,7 +125,7 @@ class ReferenceSampleStorageTests(unittest.TestCase):
             unsupported = Path(temporary_directory) / "archive.zip"
             unsupported.write_bytes(b"not supported")
 
-            with self.assertRaises(gr.Error):
+            with self.assertRaises(VoxBenchError):
                 route_uploaded_file(str(unsupported), Path(temporary_directory) / "samples")
 
 

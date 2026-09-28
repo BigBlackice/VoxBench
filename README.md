@@ -1,8 +1,9 @@
 # VoxBench
 
-VoxBench is a self-hosted workspace for generating, reviewing, organizing, and
-assembling speech with Resemble AI's Chatterbox Nano model. The application and
-model run as separate services, even on one machine. The model service selects
+VoxBench is a self-hosted workspace for turning documents or pasted text into
+speech and complete audiobooks with Resemble AI's Chatterbox Nano model. The
+single-page NiceGUI application and model run as separate services, even on one
+machine. The model service selects
 NVIDIA CUDA, AMD ROCm, or Apple Metal when supported by PyTorch, falls back to
 CPU, and returns generated audio to the application for local processing.
 
@@ -57,7 +58,9 @@ weights are downloaded to `.cache/huggingface` on first synthesis.
 
 The normal `run.bat` or `run.sh` command is the shared local deployment. It
 still uses the split architecture but manages both processes as one convenient
-launch. Closing it stops both services.
+launch. Closing it stops both services. Shared local mode always connects the
+application to its own local service at `127.0.0.1:7861`; use `run-app.*` when
+you want the saved connection settings to target a remote model service.
 
 To host only the model service, use `run-model.bat` or `run-model.sh`. This uses
 `.venv-model` and installs `requirements-model.txt`. For access from another
@@ -75,75 +78,50 @@ built-in Uvicorn listener does not provide HTTPS.
 
 To run only the application, use `run-app.bat` or `run-app.sh`. This creates
 `.venv-app`, installs only `requirements-app.txt`, and does not install, load,
-or launch Chatterbox or PyTorch. Configure its `.env` to use the model host:
-
-```dotenv
-VOXBENCH_INFERENCE_MODE=service
-VOXBENCH_MODEL_URL=http://model-host:7861
-VOXBENCH_MODEL_API_KEY=the-same-secret
-```
+or launch Chatterbox or PyTorch. Its initial configuration is written to the
+private `voxbench.json` file on first start. Use **Settings → Model
+connection** to set a remote model-service URL and API key; the default is
+`http://127.0.0.1:7861`. Changes save immediately and persist across restarts.
 
 The application performs document parsing, cleanup, chunking, file storage,
 chapter metadata, FFmpeg conversion, and audiobook assembly. The model service
 receives only prepared text chunks, synthesis settings, optional reference
 audio, and returns WAV audio. Source documents are never sent to it.
 
-A generic hosted-provider adapter is also available in code for the future UI:
-
-```dotenv
-VOXBENCH_INFERENCE_MODE=provider
-VOXBENCH_PROVIDER_URL=https://provider.example/v1/tts
-VOXBENCH_PROVIDER_API_KEY=provider-secret
-VOXBENCH_PROVIDER_MODEL=model-name
-```
-
-Provider APIs differ, so concrete providers can subclass or replace the generic
-JSON adapter. Provider selection is intentionally not exposed in the current
-Gradio interface; the upcoming UI will add capability-aware configuration.
+The same settings dialog also supports the existing generic hosted-provider
+adapter. Provider APIs differ, so a concrete provider may still need a small
+adapter for its exact request and response format.
 
 ## Reference samples
 
-Uploaded and recorded reference clips are automatically copied into the local
-`samples/` folder. Saved samples can be selected again from the WebUI without
-uploading them a second time. The folder is excluded from Git because reference
-recordings may contain private voice data.
+Place and commit one bundled default voice sample in `sample/` to use it whenever
+the user does not upload a reference clip.
 
-The shared drop area beside the synthesis textbox accepts supported text files
-or reference-audio files. Text files populate the synthesis text; audio files
-replace the current reference and are saved into `samples/`. Other file types
-are rejected.
+An uploaded reference clip is stored in the local `reference_audio/` workspace
+and used until it is removed or replaced by another upload. VoxBench keeps only
+that one active upload; the workspace is excluded from Git because it may
+contain private voice data.
 
 ## Generated output
 
-Generated audio is saved as WAV by default under the local `outputs/` folder
-while remaining available through Gradio's existing audio player and download
-button. Persistent storage can be disabled, or its destination changed, under
-**Advanced options**. Relative output paths are resolved from the project
-directory. MP3, M4A, OGG, and WebM export are also available when FFmpeg is
-installed. Only the selected format is stored. Generated output is excluded
-from Git.
+Pasted text and documents are saved under the local `outputs/` folder. A
+document is processed one prepared section at a time and assembled into a
+chaptered M4B by default. The completed file can be played or downloaded
+directly from the page. Generated output is excluded from Git.
+
+Use the **Settings** button in the header to select the output type and adjust
+seed, sampling values, repetition penalty, chunk length, pause length, and
+loudness normalization. M4B is selected by default when FFmpeg and FFprobe are
+available. It writes a chapter per current document section (one PDF page per
+chapter until bookmark-aware chapter support is added). WAV remains available
+without FFmpeg; MP3, M4A, Ogg, and WebM require FFmpeg.
 
 ## Chapter assembly
 
-The **Chapter assembly** button opens a standalone interface at `/assemble` in
-a new browser tab. It starts in the project's `outputs/` folder. The Browse
-button opens the operating system's folder picker, and the file list displays
-only supported audio files. Files can be previewed as waveforms or added to an
-ordered chapter list.
-
-The assembly interface supports non-destructive start/end trimming, per-file
-and batch volume adjustment, a speech equalization preset, reordering, and
-configurable silence or crossfade transitions. The default interval is 500 ms.
-Final files are saved under `outputs/` by default.
-
-M4B exports contain sequential `Chapter 1`, `Chapter 2`, and later markers that
-VLC can display. MP3 exports contain ID3 chapter metadata, but VLC does not
-currently read MP3 `CHAP` frames. WAV export is available as a lossless
-alternative, but WAV does not reliably support embedded chapter markers.
-
-FFmpeg and FFprobe are required for this interface. If they are unavailable,
-its controls are disabled and the interface links to the
-[official FFmpeg download page](https://ffmpeg.org/download.html).
+Document creation requires FFmpeg and FFprobe to assemble the generated
+sections and write standard M4B chapter markers that players such as VLC can
+display. Audio editing and manual chapter assembly are planned for a later
+NiceGUI screen.
 
 ### Optional FFmpeg support
 
@@ -151,36 +129,23 @@ FFmpeg is the only optional component and is an external executable rather than
 a Python package. FFprobe is normally included with FFmpeg. The application
 detects both at startup; no automated download or installation is performed.
 
-Without FFmpeg, WAV synthesis and the main WebUI remain available, while
-converted exports and chapter assembly are disabled. The interface links to the
-[official FFmpeg download page](https://ffmpeg.org/download.html).
+Without FFmpeg, pasted-text WAV synthesis remains available. Document-to-
+audiobook creation is unavailable until both FFmpeg and FFprobe are installed.
 
 ## Document workspace
 
-The **Document workspace** button opens `/doc/` in a new browser tab. PDF,
-EPUB, and DOCX files are imported into local projects under `documents/`,
-which is excluded from Git.
+PDF, EPUB, and DOCX files are imported into local projects under `documents/`,
+which is excluded from Git. Uploading a new document replaces the stored
+document data but never deletes generated output. The primary flow is simply:
+upload a document, optionally add a reference recording, and select **Create
+audiobook**. VoxBench removes repeated headers and footers, repairs ordinary
+line breaks and hyphenation, skips empty sections, and chunks each section for
+generation.
 
-The document viewer itself begins as a drag-and-drop or upload area, then
-changes into the source viewer after import. **Replace document** deletes all
-locally stored document source, extraction, edit, and status data before
-returning the same panel to upload mode. Generated files under `outputs/` are
-not deleted. This keeps at most one imported document in project storage. The
-workspace places an editable text section beside its source preview. It
-provides section navigation, autosave, renaming, reordering, duplication,
-removal, merging, cursor-based splitting, search and replace, reversible
-cleanup, and restoration of the originally extracted text. PDF pages become
-initial sections, EPUB spine chapters retain their natural order, and DOCX
-documents are divided at heading paragraphs while preserving tables in
-document order. OCR is not performed.
-
-The synthesis section beneath the editor can generate the current section,
-checked sections, or the entire document. Documents are processed one section
-at a time and use the existing automatic text chunking within each section.
-Whole-document synthesis first applies every cleanup operation, removes
-repeated headers and footers, and skips sections with no remaining text.
-Generated WAV chapters are saved under `outputs/`, remain linked to their
-source sections, and can be opened directly in Chapter assembly.
+The **Advanced editing** button opens a full-screen dialog with the selected
+parsed section and its source side by side. You can review a PDF page (or EPUB/
+DOCX source), amend a section title or text, save it, or restore the original
+extracted text before generation. OCR is not performed.
 
 ## Shared login and remote access
 
@@ -219,9 +184,9 @@ VOXBENCH_SESSION_SECRET=...
 VOXBENCH_COOKIE_SECURE=false
 ```
 
-Authentication protects the main synthesizer, document workspace, chapter
-assembly, Gradio APIs and queues, uploaded/generated media, document sources,
-and download routes with one signed login session.
+Authentication protects the application page, NiceGUI connection, uploaded/
+generated media, document sources, and download routes with one signed login
+session.
 
 `VOXBENCH_REMOTE_ACCESS=true` changes the bind address from `127.0.0.1` to
 `0.0.0.0`. VoxBench refuses to enable remote binding unless authentication is

@@ -1,13 +1,11 @@
 """Launch the app and model service as separate, automatically connected processes."""
 
 import os
-import secrets
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from dotenv import load_dotenv
 from inference.client import InferenceError, VoxBenchModelClient
 
 
@@ -24,24 +22,14 @@ def _stop(process: subprocess.Popen) -> None:
 
 def main() -> None:
     project_dir = Path(__file__).resolve().parent
-    load_dotenv(project_dir / ".env", override=False)
-    environment = os.environ.copy()
-    host = environment.get("VOXBENCH_MODEL_HOST", "127.0.0.1")
-    if host not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit(
-            "Shared local mode requires a loopback VOXBENCH_MODEL_HOST. "
-            "Use the model-only launcher for remote hosting."
-        )
-    port = int(environment.get("VOXBENCH_MODEL_PORT", "7861"))
-    api_key = environment.get("VOXBENCH_MODEL_API_KEY") or secrets.token_urlsafe(32)
-    model_url = f"http://127.0.0.1:{port}"
-    environment.update(
-        {
-            "VOXBENCH_MODEL_API_KEY": api_key,
-            "VOXBENCH_MODEL_URL": model_url,
-            "VOXBENCH_INFERENCE_MODE": "service",
-        }
-    )
+    environment = {
+        **os.environ,
+        "VOXBENCH_MODEL_HOST": "127.0.0.1",
+        "VOXBENCH_MODEL_PORT": "7861",
+        "VOXBENCH_MODEL_API_KEY": "",
+        "VOXBENCH_SHARED_LOCAL_MODE": "1",
+    }
+    model_url = "http://127.0.0.1:7861"
 
     model = subprocess.Popen(
         [sys.executable, str(project_dir / "model_server.py")],
@@ -50,7 +38,7 @@ def main() -> None:
     )
     app: subprocess.Popen | None = None
     try:
-        client = VoxBenchModelClient(model_url, api_key, timeout=2)
+        client = VoxBenchModelClient(model_url, timeout=2)
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             if model.poll() is not None:

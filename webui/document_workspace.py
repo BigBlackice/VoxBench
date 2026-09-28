@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import gradio as gr
+from webui.errors import VoxBenchError
 import soundfile as sf
 from bs4 import BeautifulSoup
 
@@ -60,10 +60,10 @@ def _safe_name(value: str) -> str:
 
 def _project_path(document_id: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", document_id or ""):
-        raise gr.Error("Invalid document project.")
+        raise VoxBenchError("Invalid document project.")
     path = (DOCUMENTS_DIR / document_id).resolve()
     if DOCUMENTS_DIR.resolve() not in path.parents:
-        raise gr.Error("Invalid document project.")
+        raise VoxBenchError("Invalid document project.")
     return path
 
 
@@ -74,7 +74,7 @@ def _manifest_path(document_id: str) -> Path:
 def load_manifest(document_id: str) -> dict[str, Any]:
     path = _manifest_path(document_id)
     if not path.is_file():
-        raise gr.Error("Document project not found.")
+        raise VoxBenchError("Document project not found.")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -91,14 +91,14 @@ def save_manifest(manifest: dict[str, Any]) -> None:
 
 def _section_path(document_id: str, section_id: str) -> Path:
     if not re.fullmatch(r"[a-f0-9]{12}", section_id or ""):
-        raise gr.Error("Invalid document section.")
+        raise VoxBenchError("Invalid document section.")
     return _project_path(document_id) / "sections" / f"{section_id}.json"
 
 
 def load_section(document_id: str, section_id: str) -> dict[str, Any]:
     path = _section_path(document_id, section_id)
     if not path.is_file():
-        raise gr.Error("Document section not found.")
+        raise VoxBenchError("Document section not found.")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -158,7 +158,7 @@ def _extract_pdf(source: Path) -> list[dict[str, Any]]:
     try:
         pages = read_pdf_pages(source)
     except PdfError as error:
-        raise gr.Error(str(error)) from error
+        raise VoxBenchError(str(error)) from error
     return [
         _new_section(
             title=f"Page {page.number}",
@@ -173,7 +173,7 @@ def _extract_docx(source: Path) -> list[dict[str, Any]]:
     try:
         sections = read_docx_sections(source)
     except DocxError as error:
-        raise gr.Error(str(error)) from error
+        raise VoxBenchError(str(error)) from error
     return [
         _new_section(
             title=section.title,
@@ -189,7 +189,7 @@ def _extract_epub(source: Path) -> list[dict[str, Any]]:
     try:
         chapters = read_epub_spine(source)
     except EpubError as error:
-        raise gr.Error(str(error)) from error
+        raise VoxBenchError(str(error)) from error
 
     for chapter in chapters:
         text, source_html, detected_title = _safe_epub_html(chapter.content)
@@ -209,7 +209,7 @@ def _extract_epub(source: Path) -> list[dict[str, Any]]:
 def import_document(file_path: str) -> str:
     source = Path(file_path).resolve()
     if not source.is_file() or source.suffix.lower() not in SUPPORTED_DOCUMENT_EXTENSIONS:
-        raise gr.Error("Upload a PDF, EPUB, or DOCX file.")
+        raise VoxBenchError("Upload a PDF, EPUB, or DOCX file.")
 
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     base = _safe_name(source.stem)
@@ -232,7 +232,7 @@ def import_document(file_path: str) -> str:
         }
         sections = extractors[source.suffix.lower()](stored_source)
         if not sections:
-            raise gr.Error("No readable text sections were found.")
+            raise VoxBenchError("No readable text sections were found.")
         for section in sections:
             save_section(document_id, section)
         save_manifest(
@@ -270,7 +270,7 @@ def clear_document_projects() -> int:
     documents_path = DOCUMENTS_DIR.resolve()
     project_path = PROJECT_DIR.resolve()
     if documents_path != project_path / "documents":
-        raise gr.Error("Refusing to clear an unexpected document directory.")
+        raise VoxBenchError("Refusing to clear an unexpected document directory.")
     if not documents_path.exists():
         return 0
 
@@ -282,7 +282,7 @@ def clear_document_projects() -> int:
     try:
         shutil.rmtree(documents_path)
     except OSError as error:
-        raise gr.Error(f"Could not clear stored document data: {error}") from error
+        raise VoxBenchError(f"Could not clear stored document data: {error}") from error
     return project_count
 
 
@@ -312,7 +312,7 @@ def reorder_sections(document_id: str, order: list[int]) -> None:
     section_ids = manifest["sections"]
     expected = list(range(1, len(section_ids) + 1))
     if sorted(order) != expected:
-        raise gr.Error("The document queue returned an invalid section order.")
+        raise VoxBenchError("The document queue returned an invalid section order.")
     manifest["sections"] = [section_ids[index - 1] for index in order]
     save_manifest(manifest)
 
@@ -328,7 +328,7 @@ def source_view_html(document_id: str, section: dict[str, Any]) -> str:
         page = section.get("source_page") or 1
         return (
             '<iframe class="document-source-frame" '
-            f'src="/document-source/{html.escape(document_id)}#page={page}" '
+            f'src="/document-source/{html.escape(document_id)}#page={page}&amp;zoom=75" '
             'title="PDF source"></iframe>'
         )
     return (
@@ -355,7 +355,8 @@ def save_editor_section(
     section = load_section(document_id, section_id)
     section["title"] = title.strip() or section["title"]
     section["text"] = _clean_extracted_text(text)
-    section["status"] = "Ready"
+    if section["status"] != "Skipped" or section["text"]:
+        section["status"] = "Ready"
     save_section(document_id, section)
 
 
@@ -367,6 +368,25 @@ def restore_section(document_id: str, section_id: str) -> tuple[str, str]:
     return section["text"], section["status"]
 
 
+def set_empty_sections_ignored(document_id: str, ignored: bool) -> int:
+    """Set the skipped state for every empty section in a document."""
+    changed = 0
+    manifest = load_manifest(document_id)
+    for section_id in manifest["sections"]:
+        section = load_section(document_id, section_id)
+        if section["text"].strip():
+            continue
+        target_status = "Skipped" if ignored else "Needs review"
+        if section["status"] == target_status:
+            continue
+        section["status"] = target_status
+        if ignored:
+            section["audio_path"] = None
+        save_section(document_id, section)
+        changed += 1
+    return changed
+
+
 def clean_text(text: str, operation: str) -> str:
     if operation == "Join broken lines":
         return re.sub(r"(?<!\n)\n(?!\n)", " ", text)
@@ -376,7 +396,7 @@ def clean_text(text: str, operation: str) -> str:
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r" *\n *", "\n", text)
         return re.sub(r"\n{3,}", "\n\n", text).strip()
-    raise gr.Error("Unknown cleanup operation.")
+    raise VoxBenchError("Unknown cleanup operation.")
 
 
 def apply_cleanup_to_sections(
@@ -386,7 +406,7 @@ def apply_cleanup_to_sections(
 ) -> int:
     """Apply one cleanup operation to selected sections and save the result."""
     if not section_ids:
-        raise gr.Error("Select at least one section.")
+        raise VoxBenchError("Select at least one section.")
     changed = 0
     for section_id in section_ids:
         section = load_section(document_id, section_id)
@@ -406,7 +426,7 @@ def section_ids_in_page_range(
 ) -> list[str]:
     """Return PDF section IDs whose source pages fall in an inclusive range."""
     if first_page < 1 or last_page < first_page:
-        raise gr.Error("Enter a valid page range, such as 300 to 500.")
+        raise VoxBenchError("Enter a valid page range, such as 300 to 500.")
     manifest = load_manifest(document_id)
     matches = [
         section_id
@@ -416,13 +436,23 @@ def section_ids_in_page_range(
         and first_page <= page <= last_page
     ]
     if not matches:
-        raise gr.Error("No PDF pages were found in that range.")
+        raise VoxBenchError("No PDF pages were found in that range.")
     return matches
 
 
-def remove_repeated_headers_footers(document_id: str) -> int:
+def remove_repeated_headers_footers(
+    document_id: str,
+    section_ids: list[str] | None = None,
+) -> int:
     manifest = load_manifest(document_id)
-    sections = [load_section(document_id, item) for item in manifest["sections"]]
+    requested_ids = set(section_ids) if section_ids is not None else None
+    if requested_ids is not None and not requested_ids <= set(manifest["sections"]):
+        raise VoxBenchError("One or more selected sections are no longer available.")
+    sections = [
+        load_section(document_id, item)
+        for item in manifest["sections"]
+        if requested_ids is None or item in requested_ids
+    ]
     if len(sections) < 2:
         return 0
 
@@ -491,7 +521,7 @@ def replace_text(
     scope: str,
 ) -> int:
     if not search:
-        raise gr.Error("Enter text to search for.")
+        raise VoxBenchError("Enter text to search for.")
     manifest = load_manifest(document_id)
     targets = (
         manifest["sections"] if scope == "Entire document" else [section_id]
@@ -538,7 +568,7 @@ def restructure_section(
 
     if action == "Remove":
         if len(section_ids) == 1:
-            raise gr.Error("A document must retain at least one section.")
+            raise VoxBenchError("A document must retain at least one section.")
         section_ids.pop(index)
         _section_path(document_id, section_id).unlink(missing_ok=True)
         save_manifest(manifest)
@@ -547,7 +577,7 @@ def restructure_section(
     if action in {"Merge previous", "Merge next"}:
         other_index = index - 1 if action == "Merge previous" else index + 1
         if other_index < 0 or other_index >= len(section_ids):
-            raise gr.Error("There is no adjacent section to merge.")
+            raise VoxBenchError("There is no adjacent section to merge.")
         first_index, second_index = sorted((index, other_index))
         first = load_section(document_id, section_ids[first_index])
         second = load_section(document_id, section_ids[second_index])
@@ -565,10 +595,10 @@ def restructure_section(
 
     if action == "Split":
         if SPLIT_MARKER not in section["text"]:
-            raise gr.Error(f"Insert {SPLIT_MARKER} at the desired split point.")
+            raise VoxBenchError(f"Insert {SPLIT_MARKER} at the desired split point.")
         first_text, second_text = section["text"].split(SPLIT_MARKER, 1)
         if not first_text.strip() or not second_text.strip():
-            raise gr.Error("The split marker must have text on both sides.")
+            raise VoxBenchError("The split marker must have text on both sides.")
         section["text"] = first_text.strip()
         section["status"] = "Needs review"
         section["audio_path"] = None
@@ -584,7 +614,7 @@ def restructure_section(
         save_manifest(manifest)
         return created["id"]
 
-    raise gr.Error("Unknown section action.")
+    raise VoxBenchError("Unknown section action.")
 
 
 def selected_section_ids(
@@ -630,3 +660,11 @@ def save_document_audio(
     section["status"] = "Generated"
     save_section(document_id, section)
     return target
+
+
+def clear_document_audio_paths(document_id: str, section_ids: list[str]) -> None:
+    """Clear temporary per-section audio references after final assembly."""
+    for section_id in section_ids:
+        section = load_section(document_id, section_id)
+        section["audio_path"] = None
+        save_section(document_id, section)

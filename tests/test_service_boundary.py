@@ -20,6 +20,7 @@ def imported_roots(path: Path) -> set[str]:
 class ServiceBoundaryTests(unittest.TestCase):
     def test_application_code_does_not_import_model_packages(self):
         application_files = [PROJECT_DIR / "app.py"]
+        application_files.extend((PROJECT_DIR / "application").glob("*.py"))
         application_files.extend((PROJECT_DIR / "inference").glob("*.py"))
         application_files.extend((PROJECT_DIR / "webui").glob("*.py"))
         violations = {

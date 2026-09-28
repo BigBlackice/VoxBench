@@ -1,1 +1,1 @@
-"""Chatterbox Nano web interface package."""
+"""VoxBench application UI, document, and audio workflows."""

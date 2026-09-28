@@ -9,9 +9,10 @@ env/
 .cache/
 .huggingface/
 
-# Private reference recordings
-samples/*
-!samples/.gitkeep
+# Bundled default voice sample (tracked with the project)
+
+# Transient user-uploaded reference audio
+reference_audio/
 
 # Generated audio
 outputs/
@@ -38,11 +39,13 @@ dist/
 .env
 .env.*
 !.env.example
+voxbench.json
 
 # Logs and temporary files
 *.log
 *.tmp
 *.temp
+.uploads/
 
 # Editors and operating systems
 .idea/
@@ -56,3 +59,6 @@ todo.md
 
 # Local exploratory QA
 qa_tests/
+
+# Archived, local-only Gradio implementation
+archive/

@@ -126,6 +126,65 @@ class DocumentWorkspaceTests(unittest.TestCase):
                     ],
                     "Second line",
                 )
+
+    def test_ignores_an_empty_section_until_it_contains_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "ignore_empty"
+                (documents / document_id).mkdir(parents=True)
+                section = document_workspace._new_section("Empty", "")
+                document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {"id": document_id, "sections": [section["id"]]}
+                )
+
+                self.assertEqual(
+                    document_workspace.set_empty_sections_ignored(document_id, True), 1
+                )
+                document_workspace.save_editor_section(document_id, section["id"], "Empty", "")
+                self.assertEqual(
+                    document_workspace.load_section(document_id, section["id"])["status"], "Skipped"
+                )
+
+                self.assertEqual(
+                    document_workspace.set_empty_sections_ignored(document_id, False), 1
+                )
+                self.assertEqual(
+                    document_workspace.load_section(document_id, section["id"])["status"], "Needs review"
+                )
+
+                document_workspace.save_editor_section(document_id, section["id"], "Empty", "Has text")
+                self.assertEqual(
+                    document_workspace.load_section(document_id, section["id"])["status"], "Ready"
+                )
+
+    def test_removes_headers_only_from_selected_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "selected_headers"
+                (documents / document_id).mkdir(parents=True)
+                sections = [
+                    document_workspace._new_section("One", "Header\nFirst"),
+                    document_workspace._new_section("Two", "Header\nSecond"),
+                    document_workspace._new_section("Three", "Header\nThird"),
+                ]
+                for section in sections:
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {"id": document_id, "sections": [section["id"] for section in sections]}
+                )
+
+                changed = document_workspace.remove_repeated_headers_footers(
+                    document_id, [sections[0]["id"], sections[1]["id"]]
+                )
+
+                self.assertEqual(changed, 2)
+                self.assertEqual(
+                    document_workspace.load_section(document_id, sections[2]["id"])["text"],
+                    "Header\nThird",
+                )
     def test_imports_docx_headings_and_tables_as_sections(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -351,6 +410,10 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 )
                 self.assertEqual(target.parent, outputs)
                 self.assertTrue(target.is_file())
+                document_workspace.clear_document_audio_paths(document_id, [section["id"]])
+                self.assertIsNone(
+                    document_workspace.load_section(document_id, section["id"])["audio_path"]
+                )
 
     def test_clearing_documents_preserves_generated_outputs(self):
         with tempfile.TemporaryDirectory() as directory:

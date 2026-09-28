@@ -7,13 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import gradio as gr
+from webui.errors import VoxBenchError
 
 from webui.config import AUDIO_FILE_EXTENSIONS, OUTPUTS_DIR, PROJECT_DIR
 from webui.storage import resolve_output_directory
 
 
-ASSEMBLY_FORMATS = (".m4b", ".mp3", ".wav")
+ASSEMBLY_FORMATS = (".m4b", ".mp3", ".wav", ".m4a", ".ogg", ".webm")
 SPEECH_EQUALIZER_FILTER = (
     "highpass=f=80,"
     "equalizer=f=3000:t=q:w=0.8:g=2,"
@@ -51,19 +51,19 @@ def audio_duration_ms(file_path: str, ffprobe_path: str) -> int:
     )
     if result.returncode:
         detail = result.stderr.decode(errors="replace").strip()
-        raise gr.Error(f"Could not inspect audio file: {detail}")
+        raise VoxBenchError(f"Could not inspect audio file: {detail}")
 
     try:
         duration = float(json.loads(result.stdout)["format"]["duration"])
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise gr.Error("Could not determine the audio duration.") from error
+        raise VoxBenchError("Could not determine the audio duration.") from error
     return max(0, round(duration * 1000))
 
 
 def validate_audio_path(file_path: str | Path) -> Path:
     path = Path(file_path).expanduser().resolve()
     if not path.is_file() or path.suffix.lower() not in AUDIO_FILE_EXTENSIONS:
-        raise gr.Error("Select a supported audio file.")
+        raise VoxBenchError("Select a supported audio file.")
     return path
 
 
@@ -74,14 +74,14 @@ def list_folder(
     """List only supported audio files in the selected folder."""
     path = Path(folder).expanduser().resolve()
     if not path.is_dir():
-        raise gr.Error("Folder not found.")
+        raise VoxBenchError("Folder not found.")
 
     selected_paths = selected_paths or set()
     rows: list[list[Any]] = []
     try:
         entries = sorted(path.iterdir(), key=lambda entry: entry.name.casefold())
     except OSError as error:
-        raise gr.Error(f"Could not open folder: {error}") from error
+        raise VoxBenchError(f"Could not open folder: {error}") from error
 
     for entry in entries:
         try:
@@ -134,7 +134,7 @@ def select_folder_dialog(initial_directory: str | Path) -> str | None:
     elif shutil.which("kdialog"):
         command = ["kdialog", "--getexistingdirectory", initial]
     else:
-        raise gr.Error(
+        raise VoxBenchError(
             "No native folder picker was found. Enter or paste a folder path instead."
         )
 
@@ -147,7 +147,7 @@ def select_folder_dialog(initial_directory: str | Path) -> str | None:
         return None
     path = Path(selected).expanduser().resolve()
     if not path.is_dir():
-        raise gr.Error("The selected folder could not be opened.")
+        raise VoxBenchError("The selected folder could not be opened.")
     return str(path)
 
 
@@ -219,14 +219,14 @@ def update_batch_item(
     trim_end_ms: int,
 ) -> list[dict[str, Any]]:
     if not batch or index < 0 or index >= len(batch):
-        raise gr.Error("Select a chapter from the batch first.")
+        raise VoxBenchError("Select a chapter from the batch first.")
 
     updated = [dict(item) for item in batch]
     item = updated[index]
     trim_start_ms = max(0, int(trim_start_ms))
     trim_end_ms = max(0, int(trim_end_ms))
     if trim_start_ms + trim_end_ms >= item["duration_ms"]:
-        raise gr.Error("Trimming must leave some audio in the chapter.")
+        raise VoxBenchError("Trimming must leave some audio in the chapter.")
 
     item.update(
         volume_db=float(volume_db),
@@ -243,7 +243,7 @@ def move_batch_item(
     offset: int,
 ) -> tuple[list[dict[str, Any]], int]:
     if not batch or index < 0 or index >= len(batch):
-        raise gr.Error("Select a chapter from the batch first.")
+        raise VoxBenchError("Select a chapter from the batch first.")
     target = min(max(index + offset, 0), len(batch) - 1)
     updated = list(batch)
     updated[index], updated[target] = updated[target], updated[index]
@@ -255,7 +255,7 @@ def remove_batch_item(
     index: int,
 ) -> tuple[list[dict[str, Any]], int]:
     if not batch or index < 0 or index >= len(batch):
-        raise gr.Error("Select a chapter from the batch first.")
+        raise VoxBenchError("Select a chapter from the batch first.")
     updated = list(batch)
     updated.pop(index)
     return updated, min(index, len(updated) - 1)
@@ -330,7 +330,7 @@ def preview_processed_audio(
     if result.returncode:
         target.unlink(missing_ok=True)
         detail = result.stderr.decode(errors="replace").strip()
-        raise gr.Error(f"Could not create preview: {detail}")
+        raise VoxBenchError(f"Could not create preview: {detail}")
     return str(target)
 
 
@@ -344,12 +344,12 @@ def chapter_timeline(
         for item in batch
     ]
     if any(duration <= 0 for duration in durations):
-        raise gr.Error("Each chapter must contain audio after trimming.")
+        raise VoxBenchError("Each chapter must contain audio after trimming.")
 
     interval = max(0, int(transition_ms))
     if transition_mode == "Crossfade" and len(durations) > 1:
         if interval >= min(durations):
-            raise gr.Error("Crossfade must be shorter than every chapter.")
+            raise VoxBenchError("Crossfade must be shorter than every chapter.")
         starts = [0]
         for previous_duration in durations[:-1]:
             starts.append(starts[-1] + previous_duration - interval)
@@ -388,7 +388,13 @@ def _output_codec(extension: str) -> list[str]:
         return ["-c:a", "libmp3lame", "-q:a", "2"]
     if extension == ".wav":
         return ["-c:a", "pcm_s16le"]
-    raise gr.Error("Unsupported assembly format.")
+    if extension == ".m4a":
+        return ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+    if extension == ".ogg":
+        return ["-c:a", "libvorbis", "-q:a", "5"]
+    if extension == ".webm":
+        return ["-c:a", "libopus", "-b:a", "128k"]
+    raise VoxBenchError("Unsupported assembly format.")
 
 
 def _stage_audio_inputs(
@@ -435,9 +441,9 @@ def assemble_chapters(
 ) -> Path:
     """Assemble chapters directly into a final file with chapter metadata."""
     if not batch:
-        raise gr.Error("Select at least one audio file.")
+        raise VoxBenchError("Select at least one audio file.")
     if output_format not in ASSEMBLY_FORMATS:
-        raise gr.Error("Unsupported assembly format.")
+        raise VoxBenchError("Unsupported assembly format.")
 
     for item in batch:
         validate_audio_path(item["path"])
@@ -528,7 +534,7 @@ def assemble_chapters(
     if result.returncode:
         target.unlink(missing_ok=True)
         detail = result.stderr.decode(errors="replace").strip()
-        raise gr.Error(f"Could not assemble chapters: {detail}")
+        raise VoxBenchError(f"Could not assemble chapters: {detail}")
     return target
 
 

@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-import os
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -198,23 +197,32 @@ class GenericProviderClient(_JsonHttpClient):
         return _decode_audio(audio)
 
 
-def create_inference_backend() -> VoxBenchModelClient | GenericProviderClient:
-    mode = os.getenv("VOXBENCH_INFERENCE_MODE", "service").strip().lower()
-    timeout = float(os.getenv("VOXBENCH_INFERENCE_TIMEOUT", "600"))
+def create_inference_backend(
+    *,
+    mode: str = "service",
+    service_url: str = "http://127.0.0.1:7861",
+    service_api_key: str = "",
+    timeout: float = 600.0,
+    provider_url: str = "",
+    provider_api_key: str = "",
+    provider_model: str = "",
+) -> VoxBenchModelClient | GenericProviderClient:
+    """Build an inference client from application configuration, not env vars."""
+    mode = mode.strip().lower()
     if mode == "provider":
-        endpoint = os.getenv("VOXBENCH_PROVIDER_URL", "").strip()
+        endpoint = provider_url.strip()
         if not endpoint:
-            raise RuntimeError("VOXBENCH_PROVIDER_URL is required in provider mode.")
+            raise RuntimeError("A provider URL is required in provider mode.")
         return GenericProviderClient(
             endpoint=endpoint,
-            api_key=os.getenv("VOXBENCH_PROVIDER_API_KEY", ""),
-            model=os.getenv("VOXBENCH_PROVIDER_MODEL", ""),
+            api_key=provider_api_key,
+            model=provider_model,
             timeout=timeout,
         )
     if mode != "service":
-        raise RuntimeError("VOXBENCH_INFERENCE_MODE must be service or provider.")
+        raise RuntimeError("Inference mode must be service or provider.")
     return VoxBenchModelClient(
-        base_url=os.getenv("VOXBENCH_MODEL_URL", "http://127.0.0.1:7861"),
-        api_key=os.getenv("VOXBENCH_MODEL_API_KEY", ""),
+        base_url=service_url,
+        api_key=service_api_key,
         timeout=timeout,
     )
