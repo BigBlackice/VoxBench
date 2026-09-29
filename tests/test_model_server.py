@@ -56,6 +56,41 @@ class ModelServerTests(unittest.TestCase):
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
 
+    def test_reference_session_is_reused_and_explicitly_deleted(self):
+        session_id = "test-reference-session-token"
+        with patch.object(model_server.runtime, "create_reference_session", return_value=session_id) as create:
+            created = self.client.post(
+                "/v1/reference-sessions",
+                json={
+                    "filename": "sample.wav",
+                    "data": base64.b64encode(b"audio").decode(),
+                },
+            )
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json(), {"id": session_id})
+        self.assertEqual(create.call_args.args, ("sample.wav", b"audio"))
+
+        result = AudioResult(24_000, np.zeros(240, dtype=np.float32))
+        with (
+            patch.object(model_server.runtime, "reference_for_session", return_value="/tmp/sample.wav"),
+            patch.object(model_server.runtime, "synthesize", return_value=result) as synthesize,
+        ):
+            response = self.client.post(
+                "/v1/synthesize",
+                json={
+                    "api_version": "1",
+                    "text": "Prepared text only",
+                    "reference_session": session_id,
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(synthesize.call_args.args[0].audio_prompt_path, "/tmp/sample.wav")
+
+        with patch.object(model_server.runtime, "close_reference_session") as close:
+            deleted = self.client.delete(f"/v1/reference-sessions/{session_id}")
+        self.assertEqual(deleted.status_code, 204)
+        close.assert_called_once_with(session_id)
+
 
 if __name__ == "__main__":
     unittest.main()

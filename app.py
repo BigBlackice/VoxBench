@@ -18,7 +18,7 @@ from webui.auth import (
     load_auth_settings,
     login_page,
 )
-from webui.config import MODEL_CACHE_DIR, OUTPUTS_DIR
+from webui.config import MODEL_CACHE_DIR, OUTPUTS_DIR, PROJECT_DIR
 from webui.app_config import ModelConnection, ModelConnectionSettings
 from webui.document_workspace import document_source_path
 from webui.errors import VoxBenchError
@@ -80,11 +80,15 @@ def serve_document_source(document_id: str) -> FileResponse:
 
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.add_static_files("/outputs", OUTPUTS_DIR, max_cache_age=0)
+app.add_static_files("/static", PROJECT_DIR / "webui" / "static")
 
 
 @ui.page("/")
 def index() -> None:
-    ui.add_head_html(f"<style>{themed_styles()}</style>")
+    ui.add_head_html(
+        f'<link rel="icon" type="image/png" href="/static/favicon.png">'
+        f"<style>{themed_styles()}</style>"
+    )
     ui.dark_mode().enable()
     build_interface(
         model_connection=MODEL_CONNECTION,

@@ -1,6 +1,10 @@
 import random
+import secrets
 import tempfile
 import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -8,6 +12,16 @@ import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 from inference.contract import AudioResult, SynthesisRequest
+
+
+REFERENCE_SESSION_IDLE_SECONDS = 30 * 60
+MAX_REFERENCE_SESSIONS = 16
+
+
+@dataclass
+class _ReferenceSession:
+    path: Path
+    expires_at: float
 
 
 def detect_device() -> tuple[str, str]:
@@ -29,6 +43,9 @@ class ChatterboxRuntime:
         self._model: ChatterboxTurboTTS | None = None
         self._load_lock = threading.Lock()
         self._generation_lock = threading.Lock()
+        self._reference_directory = tempfile.TemporaryDirectory(prefix="voxbench_model_")
+        self._reference_sessions: dict[str, _ReferenceSession] = {}
+        self._reference_lock = threading.Lock()
 
     def capabilities(self) -> dict[str, Any]:
         return {
@@ -38,6 +55,7 @@ class ChatterboxRuntime:
             "device_label": self.device_label,
             "sample_rate": 24_000,
             "reference_audio": True,
+            "reference_sessions": True,
             "parameters": [
                 "temperature",
                 "seed",
@@ -65,7 +83,7 @@ class ChatterboxRuntime:
 
     def synthesize(self, request: SynthesisRequest) -> AudioResult:
         model = self._get_model()
-        with self._generation_lock:
+        with self._generation_lock, torch.inference_mode():
             if request.seed:
                 torch.manual_seed(request.seed)
                 random.seed(request.seed)
@@ -80,12 +98,11 @@ class ChatterboxRuntime:
                 repetition_penalty=request.repetition_penalty,
                 norm_loudness=request.norm_loudness,
             )
-            samples = wav.squeeze(0).detach().cpu().float().numpy()
+            samples = wav.squeeze(0).detach().cpu().float().numpy().copy()
+            del wav
         return AudioResult(model.sr, samples)
 
     def save_reference(self, filename: str, content: bytes) -> str:
-        from pathlib import Path
-
         suffix = Path(filename).suffix.lower()
         if suffix not in {".flac", ".m4a", ".mp3", ".ogg", ".wav", ".webm"}:
             suffix = ".audio"
@@ -93,6 +110,56 @@ class ChatterboxRuntime:
             prefix="voxbench_reference_",
             suffix=suffix,
             delete=False,
+            dir=self._reference_directory.name,
         ) as temporary:
             temporary.write(content)
             return temporary.name
+
+    def _purge_expired_reference_sessions_locked(self) -> None:
+        now = time.monotonic()
+        expired = [
+            token
+            for token, session in self._reference_sessions.items()
+            if session.expires_at <= now
+        ]
+        for token in expired:
+            session = self._reference_sessions.pop(token)
+            session.path.unlink(missing_ok=True)
+
+    def create_reference_session(self, filename: str, content: bytes) -> str:
+        """Store one reference clip for a bounded, idle-expiring session."""
+        with self._reference_lock:
+            self._purge_expired_reference_sessions_locked()
+            if len(self._reference_sessions) >= MAX_REFERENCE_SESSIONS:
+                raise RuntimeError("The model service has reached its reference-session limit.")
+            path = Path(self.save_reference(filename, content))
+            token = secrets.token_urlsafe(32)
+            self._reference_sessions[token] = _ReferenceSession(
+                path=path,
+                expires_at=time.monotonic() + REFERENCE_SESSION_IDLE_SECONDS,
+            )
+            return token
+
+    def reference_for_session(self, token: str) -> str | None:
+        """Resolve and refresh an active reference session without retaining audio in RAM."""
+        with self._reference_lock:
+            self._purge_expired_reference_sessions_locked()
+            session = self._reference_sessions.get(token)
+            if session is None or not session.path.is_file():
+                return None
+            session.expires_at = time.monotonic() + REFERENCE_SESSION_IDLE_SECONDS
+            return str(session.path)
+
+    def close_reference_session(self, token: str) -> None:
+        with self._reference_lock:
+            session = self._reference_sessions.pop(token, None)
+            if session:
+                session.path.unlink(missing_ok=True)
+
+    def close(self) -> None:
+        """Release reference-session files during a graceful model-service shutdown."""
+        with self._reference_lock:
+            for session in self._reference_sessions.values():
+                session.path.unlink(missing_ok=True)
+            self._reference_sessions.clear()
+        self._reference_directory.cleanup()

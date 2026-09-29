@@ -1,8 +1,9 @@
 import base64
 import io
 import json
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -94,8 +95,13 @@ class _JsonHttpClient:
                 f"Could not connect to inference endpoint {self.base_url}: {error}"
             ) from error
 
-    def _json(self, method: str, path: str) -> dict[str, Any]:
-        content, _ = self._request(method, path)
+    def _json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        content, _ = self._request(method, path, payload)
         try:
             result = json.loads(content)
         except json.JSONDecodeError as error:
@@ -132,11 +138,21 @@ class VoxBenchModelClient(_JsonHttpClient):
         return dict(self._capabilities)
 
     def synthesize(self, request: SynthesisRequest) -> AudioResult:
+        return self._synthesize(request)
+
+    def _synthesize(
+        self,
+        request: SynthesisRequest,
+        reference_session: str | None = None,
+    ) -> AudioResult:
         payload = {
             "api_version": API_VERSION,
             "text": request.text,
             "parameters": request.parameters(),
-            "reference_audio": _reference_payload(request.audio_prompt_path),
+            "reference_audio": (
+                None if reference_session else _reference_payload(request.audio_prompt_path)
+            ),
+            "reference_session": reference_session,
         }
         content, content_type = self._request(
             "POST", f"/v{API_VERSION}/synthesize", payload
@@ -144,6 +160,36 @@ class VoxBenchModelClient(_JsonHttpClient):
         if not content_type.startswith("audio/"):
             raise InferenceError("The model service did not return audio.")
         return _decode_audio(content)
+
+    @contextmanager
+    def reference_session(
+        self,
+        reference_audio_path: str | None,
+    ) -> Iterator[Callable[[SynthesisRequest], AudioResult]]:
+        """Reuse one uploaded reference clip for a complete local batch."""
+        if not reference_audio_path or not self.capabilities().get("reference_sessions"):
+            yield self.synthesize
+            return
+        reference = _reference_payload(reference_audio_path)
+        if reference is None:
+            yield self.synthesize
+            return
+        response = self._json(
+            "POST",
+            f"/v{API_VERSION}/reference-sessions",
+            reference,
+        )
+        session_id = response.get("id")
+        if not isinstance(session_id, str) or not session_id:
+            raise InferenceError("The model service returned an invalid reference session.")
+        try:
+            yield lambda request: self._synthesize(request, reference_session=session_id)
+        finally:
+            try:
+                self._request("DELETE", f"/v{API_VERSION}/reference-sessions/{session_id}")
+            except InferenceError:
+                # The server also expires idle sessions, so cleanup errors do not hide synthesis errors.
+                pass
 
 
 class GenericProviderClient(_JsonHttpClient):

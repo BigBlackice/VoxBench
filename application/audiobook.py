@@ -1,10 +1,11 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import numpy as np
 
-from inference.contract import InferenceBackend, SynthesisRequest
+from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
 from webui.audio_processing import join_audio_chunks
 from webui.chapter_assembly import assemble_chapters, create_batch_item
 from webui.document_workspace import (
@@ -44,8 +45,23 @@ class AudiobookResult:
     section_count: int
 
 
+@contextmanager
+def _reference_synthesizer(
+    backend: InferenceBackend,
+    reference_audio: str | None,
+) -> Iterator[Callable[[SynthesisRequest], AudioResult]]:
+    """Use a backend reference session when available, otherwise synthesize normally."""
+    open_session = getattr(backend, "reference_session", None)
+    if callable(open_session):
+        with open_session(reference_audio) as synthesize:
+            yield synthesize
+        return
+    yield backend.synthesize
+
+
 def _synthesize_text(
     backend: InferenceBackend,
+    synthesize_chunk: Callable[[SynthesisRequest], AudioResult],
     text: str,
     reference_audio: str | None,
     settings: SynthesisSettings,
@@ -63,7 +79,7 @@ def _synthesize_text(
             progress_start + progress_span * (index - 1) / len(chunks),
             f"Generating chunk {index} of {len(chunks)}",
         )
-        result = backend.synthesize(
+        result = synthesize_chunk(
             SynthesisRequest(
                 text=chunk,
                 audio_prompt_path=reference_audio,
@@ -84,7 +100,7 @@ def _synthesize_text(
     return sample_rate, join_audio_chunks(audio_chunks, sample_rate, settings.pause_ms)
 
 
-def create_audiobook(
+def _create_audiobook(
     *,
     backend: InferenceBackend,
     document_path: str | None,
@@ -98,8 +114,10 @@ def create_audiobook(
     section_ids: list[str] | None = None,
     output_format: str = ".m4b",
     progress: ProgressCallback = lambda _value, _message: None,
+    synthesize_chunk: Callable[[SynthesisRequest], AudioResult] | None = None,
 ) -> AudiobookResult:
     """Create an audiobook, using document sections as chapter boundaries."""
+    synthesize_chunk = synthesize_chunk or backend.synthesize
     if output_format not in SUPPORTED_AUDIOBOOK_FORMATS:
         raise VoxBenchError("Unsupported audiobook format.")
     if document_path or document_id:
@@ -131,6 +149,7 @@ def create_audiobook(
             start = (section_index - 1) / len(sections_to_generate)
             sample_rate, audio = _synthesize_text(
                 backend,
+                synthesize_chunk,
                 section["text"],
                 reference_audio,
                 settings,
@@ -143,33 +162,36 @@ def create_audiobook(
             )
         if not ffmpeg_path or not ffprobe_path:
             raise VoxBenchError("FFmpeg and FFprobe are required to create an audiobook.")
-        progress(1.0, "Assembling audiobook chapters")
-        batch = [create_batch_item(str(path), ffprobe_path) for path in generated_paths]
-        output = assemble_chapters(
-            batch,
-            "Silence",
-            500,
-            0.0,
-            False,
-            output_format,
-            output_directory,
-            ffmpeg_path,
-        )
-        for generated_path in generated_paths:
-            try:
-                generated_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         try:
-            clear_document_audio_paths(document_id, sections_to_generate)
-        except (OSError, VoxBenchError):
-            pass
-        return AudiobookResult(output, document_id, len(sections_to_generate))
+            progress(1.0, "Assembling audiobook chapters")
+            batch = [create_batch_item(str(path), ffprobe_path) for path in generated_paths]
+            output = assemble_chapters(
+                batch,
+                "Silence",
+                500,
+                0.0,
+                False,
+                output_format,
+                output_directory,
+                ffmpeg_path,
+            )
+            return AudiobookResult(output, document_id, len(sections_to_generate))
+        finally:
+            for generated_path in generated_paths:
+                try:
+                    generated_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            try:
+                clear_document_audio_paths(document_id, sections_to_generate)
+            except (OSError, VoxBenchError):
+                pass
 
     if not pasted_text or not pasted_text.strip():
         raise VoxBenchError("Upload a document or paste text to begin.")
     sample_rate, audio = _synthesize_text(
         backend,
+        synthesize_chunk,
         pasted_text,
         reference_audio,
         settings,
@@ -208,3 +230,37 @@ def create_audiobook(
             ffmpeg_path,
         )
     return AudiobookResult(output, None, 1)
+
+
+def create_audiobook(
+    *,
+    backend: InferenceBackend,
+    document_path: str | None,
+    pasted_text: str | None,
+    reference_audio: str | None,
+    settings: SynthesisSettings,
+    ffmpeg_path: str | None,
+    ffprobe_path: str | None,
+    output_directory: str,
+    document_id: str | None = None,
+    section_ids: list[str] | None = None,
+    output_format: str = ".m4b",
+    progress: ProgressCallback = lambda _value, _message: None,
+) -> AudiobookResult:
+    """Create an audiobook while keeping one reference session for the full batch."""
+    with _reference_synthesizer(backend, reference_audio) as synthesize_chunk:
+        return _create_audiobook(
+            backend=backend,
+            document_path=document_path,
+            pasted_text=pasted_text,
+            reference_audio=reference_audio,
+            settings=settings,
+            ffmpeg_path=ffmpeg_path,
+            ffprobe_path=ffprobe_path,
+            output_directory=output_directory,
+            document_id=document_id,
+            section_ids=section_ids,
+            output_format=output_format,
+            progress=progress,
+            synthesize_chunk=synthesize_chunk,
+        )

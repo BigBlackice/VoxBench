@@ -22,6 +22,7 @@ def wav_bytes() -> bytes:
 
 class InferenceHandler(BaseHTTPRequestHandler):
     requests = []
+    session_id = "reference-session-token"
 
     def log_message(self, format, *args):
         pass
@@ -33,7 +34,7 @@ class InferenceHandler(BaseHTTPRequestHandler):
         if self.path.endswith("/health"):
             body = {"status": "ok", "api_version": "1"}
         else:
-            body = {"api_version": "1", "sample_rate": 24_000}
+            body = {"api_version": "1", "sample_rate": 24_000, "reference_sessions": True}
         encoded = json.dumps(body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -45,6 +46,14 @@ class InferenceHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length))
         self.requests.append((self.path, payload, self.headers.get("Authorization")))
+        if self.path == "/v1/reference-sessions":
+            encoded = json.dumps({"id": self.session_id}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         audio = wav_bytes()
         if self.path == "/provider":
             encoded = json.dumps({"audio": base64.b64encode(audio).decode()}).encode()
@@ -57,6 +66,11 @@ class InferenceHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def do_DELETE(self):
+        self.requests.append((self.path, None, self.headers.get("Authorization")))
+        self.send_response(204)
+        self.end_headers()
 
 
 class InferenceClientTests(unittest.TestCase):
@@ -101,6 +115,27 @@ class InferenceClientTests(unittest.TestCase):
         result = client.synthesize(SynthesisRequest("Hello provider"))
         self.assertEqual(result.sample_rate, 24_000)
         self.assertEqual(InferenceHandler.requests[-1][1]["model"], "hosted-tts")
+
+    def test_reference_session_uploads_once_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reference = Path(directory) / "voice.wav"
+            reference.write_bytes(b"reference")
+            client = VoxBenchModelClient(self.base_url, "test-key")
+            with client.reference_session(str(reference)) as synthesize:
+                synthesize(SynthesisRequest("First", audio_prompt_path=str(reference)))
+                synthesize(SynthesisRequest("Second", audio_prompt_path=str(reference)))
+
+        requests = InferenceHandler.requests[-4:]
+        self.assertEqual(requests[0][0], "/v1/reference-sessions")
+        self.assertEqual(
+            base64.b64decode(requests[0][1]["data"]),
+            b"reference",
+        )
+        for path, payload, _authorization in requests[1:3]:
+            self.assertEqual(path, "/v1/synthesize")
+            self.assertEqual(payload["reference_session"], InferenceHandler.session_id)
+            self.assertIsNone(payload["reference_audio"])
+        self.assertEqual(requests[3][0], "/v1/reference-sessions/reference-session-token")
 
 
 if __name__ == "__main__":

@@ -96,13 +96,14 @@ def build_interface(
     ui.add_head_html("<title>VoxBench</title>")
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-5"):
         with ui.row().classes("w-full items-center justify-between"):
-            with ui.column().classes("gap-0"):
-                ui.label("VoxBench").classes("text-3xl font-bold")
-                ui.label("Create clear speech and complete audiobooks from one place.").classes(
-                    "vox-muted"
-                )
+            with ui.row().classes("items-center gap-3"):
+                ui.image("/static/favicon.png").classes("w-11 h-11 rounded-lg")
+                with ui.column().classes("gap-0"):
+                    ui.label("VoxBench").classes("vox-page-title text-3xl font-bold")
+                    ui.label("Create clear speech and complete audiobooks from one place.").classes(
+                        "vox-muted"
+                    )
             with ui.row().classes("items-center"):
-                backend_label = ui.label(model_connection.backend.label).classes("vox-muted text-sm")
                 settings_button = _button("Settings", icon="settings")
                 advanced_button = _button("Advanced editing", icon="edit_note")
 
@@ -123,7 +124,7 @@ def build_interface(
         with ui.tab_panels(tabs, value=document_tab).classes("w-full"):
             with ui.tab_panel(document_tab):
                 with ui.card().classes("vox-card w-full p-5"):
-                    ui.label("1. Upload your document").classes("text-lg font-medium")
+                    ui.label("1. Upload your document").classes("vox-primary-heading text-lg font-medium")
                     ui.label("PDF, EPUB, or DOCX. It is prepared locally and kept until replaced.").classes(
                         "vox-muted"
                     )
@@ -209,13 +210,13 @@ def build_interface(
 
             with ui.tab_panel(text_tab):
                 with ui.card().classes("vox-card w-full p-5"):
-                    ui.label("1. Paste text").classes("text-lg font-medium")
+                    ui.label("1. Paste text").classes("vox-primary-heading text-lg font-medium")
                     text_input = ui.textarea(
                         placeholder="Paste the text you want VoxBench to narrate…"
                     ).classes("vox-text-input w-full").props("outlined autogrow")
 
         with ui.card().classes("vox-card w-full p-5"):
-            ui.label("2. Add a voice sample (optional)").classes("text-lg font-medium")
+            ui.label("2. Add a voice sample (optional)").classes("vox-primary-heading text-lg font-medium")
 
             def default_reference_label() -> str:
                 default_reference = state["default_reference_audio"]
@@ -306,7 +307,7 @@ def build_interface(
             output_area.clear()
             with output_area:
                 with ui.card().classes("vox-card w-full p-4"):
-                    ui.label("Audiobook ready").classes("text-lg font-medium")
+                    ui.label("Audiobook ready").classes("vox-primary-heading text-lg font-medium")
                     ui.label(result.output_path.name).classes("vox-muted")
                     ui.audio(f"/outputs/{result.output_path.name}").classes("w-full")
                     _button("Download", lambda: ui.download(result.output_path))
@@ -375,7 +376,7 @@ def build_interface(
 
         with ui.dialog() as settings_dialog, ui.card().classes("vox-card w-[min(94vw,680px)] p-5"):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("Generation settings").classes("text-xl font-medium")
+                ui.label("Generation settings").classes("vox-primary-heading text-xl font-medium")
                 _button("Close", settings_dialog.close, icon="close")
             ui.label("M4B is the default and writes chapter markers from the current document sections.").classes(
                 "vox-muted"
@@ -428,7 +429,7 @@ def build_interface(
             _button("Save settings", save_settings, icon="save").classes("w-full")
 
             ui.separator()
-            ui.label("Model connection").classes("text-lg font-medium")
+            ui.label("Model connection").classes("vox-primary-heading text-lg font-medium")
             connection_type = ui.select(
                 {
                     "service": "VoxBench model service",
@@ -497,7 +498,6 @@ def build_interface(
                 except (RuntimeError, ValueError, VoxBenchError) as error:
                     ui.notify(str(error), type="negative")
                     return
-                backend_label.set_text(model_connection.backend.label)
                 ui.notify("Model connection saved.", type="positive")
 
             _button("Save model connection", save_connection, icon="save").classes("w-full")
@@ -506,12 +506,12 @@ def build_interface(
             "vox-card relative w-[96vw] max-w-none"
         ):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("Advanced document editing").classes("text-xl font-medium")
+                ui.label("Advanced document editing").classes("vox-primary-heading text-xl font-medium")
                 _button("Close", advanced_dialog.close, icon="close")
             with ui.row().classes("w-full no-wrap gap-4"):
                 with ui.column().classes("basis-[13%] min-w-[150px] gap-3"):
                     with ui.row().classes("w-full items-center justify-between"):
-                        ui.label("Pages").classes("text-lg font-medium")
+                        ui.label("Pages").classes("vox-primary-heading text-lg font-medium")
                         selected_count = ui.label("0 selected").classes("vox-muted text-sm")
                     section_table = ui.table(
                         columns=[
@@ -522,7 +522,7 @@ def build_interface(
                         selection="multiple",
                     ).classes("vox-section-table w-full").style("height: 74vh")
                 with ui.column().classes("basis-[35%] min-w-0 gap-3"):
-                    ui.label("Parsed text").classes("text-lg font-medium")
+                    ui.label("Parsed text").classes("vox-primary-heading text-lg font-medium")
                     editor = ui.textarea().classes("vox-document-editor w-full").props("outlined autogrow")
                     with ui.row().classes("w-full gap-2"):
                         restore_button = _button("Restore original")
@@ -536,7 +536,7 @@ def build_interface(
                             fix_lines = ui.checkbox("Join broken lines", value=True)
                             fix_whitespace = ui.checkbox("Normalize whitespace", value=True)
                 with ui.column().classes("basis-[52%] min-w-0"):
-                    ui.label("Source document").classes("text-lg font-medium")
+                    ui.label("Source document").classes("vox-primary-heading text-lg font-medium")
                     # The workspace sanitizes imported EPUB/Docx HTML before it is stored.
                     source = ui.html("").classes("w-full")
 
