@@ -144,7 +144,7 @@ def build_interface(
             with ui.tab_panel(document_tab):
                 with ui.card().classes("vox-card w-full p-5"):
                     ui.label("1. Upload your document").classes("vox-primary-heading text-lg font-medium")
-                    ui.label("PDF, EPUB, or DOCX. It is prepared locally and kept until replaced.").classes(
+                    ui.label("PDF, EPUB, or DOCX.").classes(
                         "vox-muted"
                     )
                     async def remove_document() -> None:
