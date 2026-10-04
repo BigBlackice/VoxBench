@@ -32,6 +32,7 @@ from app_logic.workspace import (
     SUPPORTED_DOCUMENT_EXTENSIONS,
     apply_cleanup_to_sections,
     clear_document_projects,
+    document_page_count,
     document_source_path,
     import_document,
     list_documents,
@@ -87,11 +88,15 @@ def build_interface(
     state: dict[str, Any] = {
         "document_id": stored_manifest["id"] if stored_manifest else None,
         "reference_audio": None,
+        "reference_name": None,
         "default_reference_audio": str(bundled_reference) if bundled_reference else None,
         "busy": False,
         "progress": "Ready.",
         "settings": SynthesisSettings(),
         "output_format": ".m4b" if ffmpeg_path and ffprobe_path else ".wav",
+        "use_pdf_bookmarks": True,
+        "pdf_bookmark_depth": 1,
+        "skip_pdf_table_of_contents": True,
         "ignore_empty_pages": False,
         "selection_version": 0,
         "editor_section_id": None,
@@ -106,11 +111,13 @@ def build_interface(
 
     ui.context.client.on_disconnect(cleanup_reference_workspace)
     stored_document_size = 0
+    stored_document_pages = 0
     if stored_manifest:
         try:
             stored_document_size = document_source_path(stored_manifest["id"]).stat().st_size
         except OSError:
             pass
+        stored_document_pages = document_page_count(stored_manifest["id"])
 
     ui.add_head_html("<title>VoxBench</title>")
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-5"):
@@ -134,7 +141,9 @@ def build_interface(
                 )
 
         status = ui.label("").classes("vox-muted")
-        progress_bar = ui.linear_progress(value=0).classes("w-full")
+        with ui.row().classes("w-full items-center gap-3"):
+            progress_bar = ui.linear_progress(value=0).classes("flex-1")
+            progress_percent = ui.label("0.0%").classes("vox-muted text-sm")
         output_area = ui.column().classes("w-full")
 
         with ui.tabs().classes("w-full") as tabs:
@@ -175,9 +184,10 @@ def build_interface(
                             )
                             state["document_id"] = document_id
                             manifest = await run.io_bound(load_manifest, document_id)
+                            page_count = await run.io_bound(document_page_count, document_id)
                             document_file_label.set_text(
                                 f"{manifest['source_name']} ({_format_file_size(len(data))}) - "
-                                f"{len(manifest['sections'])} Pages."
+                                f"{page_count} Pages."
                             )
                             document_check.visible = True
                             document_remove.visible = True
@@ -212,7 +222,7 @@ def build_interface(
                             document_file_label = ui.label(
                                 (
                                     f"{stored_manifest['source_name']} ({_format_file_size(stored_document_size)}) - "
-                                    f"{len(stored_manifest['sections'])} sections ready."
+                                    f"{stored_document_pages} pages ready."
                                     if stored_manifest
                                     else "No document selected."
                                 )
@@ -250,7 +260,7 @@ def build_interface(
             def reference_label() -> str:
                 reference = state["reference_audio"]
                 if reference:
-                    return f"{Path(reference).name} (uploaded reference)"
+                    return f"{state['reference_name'] or Path(reference).name} (uploaded reference)"
                 return default_reference_label()
 
             async def remove_reference() -> None:
@@ -261,6 +271,7 @@ def build_interface(
                         ui.notify(str(error), type="negative")
                         return
                 state["reference_audio"] = None
+                state["reference_name"] = None
                 reference_upload_progress.visible = False
                 reference_check.visible = False
                 reference_remove.visible = False
@@ -281,8 +292,9 @@ def build_interface(
                         reference_workspace,
                     )
                     state["reference_audio"] = str(sample) if sample else None
+                    state["reference_name"] = Path(event.name).name if sample else None
                     reference_file_label.set_text(
-                        f"{sample.name} ({_format_file_size(len(data))})"
+                        f"{state['reference_name']} ({_format_file_size(len(data))})"
                         if sample
                         else default_reference_label()
                     )
@@ -365,6 +377,8 @@ def build_interface(
             state["busy"] = True
             create_button.disable()
             progress_bar.value = 0
+            progress_percent.set_text("0.0%")
+            state["progress"] = (0.0, "Starting")
             status.set_text("Starting generation…")
 
             def report(value: float, message: str) -> None:
@@ -383,10 +397,14 @@ def build_interface(
                     ffprobe_path=ffprobe_path,
                     output_directory=str(OUTPUTS_DIR),
                     output_format=state["output_format"],
+                    use_pdf_bookmarks=state["use_pdf_bookmarks"],
+                    pdf_bookmark_depth=state["pdf_bookmark_depth"],
+                    skip_pdf_table_of_contents=state["skip_pdf_table_of_contents"],
                     progress=report,
                 )
                 show_output(result)
                 progress_bar.value = 1
+                progress_percent.set_text("100.0%")
                 status.set_text("Finished.")
             except (InferenceError, OSError, VoxBenchError) as error:
                 ui.notify(str(error), type="negative")
@@ -403,6 +421,7 @@ def build_interface(
             if state["busy"]:
                 value, message = state["progress"]
                 progress_bar.value = value
+                progress_percent.set_text(f"{value * 100:.1f}%")
                 status.set_text(message)
 
         ui.timer(0.25, update_progress)
@@ -411,7 +430,7 @@ def build_interface(
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Generation settings").classes("vox-primary-heading text-xl font-medium")
                 _button("Close", settings_dialog.close, icon="close")
-            ui.label("M4B is the default and writes chapter markers from the current document sections.").classes(
+            ui.label("M4B is the default and writes chapter markers from document pages.").classes(
                 "vox-muted"
             )
             available_formats = {
@@ -552,6 +571,26 @@ def build_interface(
         ):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Advanced document editing").classes("vox-primary-heading text-xl font-medium")
+                with ui.row().classes("items-center gap-3") as source_chapter_controls:
+                    pdf_chapter_toggle = ui.checkbox(
+                        "Use source chapters for output",
+                        value=state["use_pdf_bookmarks"],
+                    )
+                    skip_pdf_toc = ui.checkbox(
+                        "Skip printed table of contents",
+                        value=state["skip_pdf_table_of_contents"],
+                    )
+                    pdf_chapter_depth = ui.select(
+                        {
+                            0: "Top level only",
+                            1: "1 level deep",
+                            2: "2 levels deep",
+                            3: "3 levels deep",
+                            4: "4 levels deep",
+                        },
+                        value=state["pdf_bookmark_depth"],
+                        label="Chapter depth",
+                    ).classes("w-44")
                 _button("Close", advanced_dialog.close, icon="close")
             with ui.row().classes("w-full no-wrap gap-4"):
                 with ui.column().classes("basis-[13%] min-w-[150px] gap-3"):
@@ -577,6 +616,7 @@ def build_interface(
                         ui.label("Apply before generating selected pages").classes("vox-muted text-sm")
                         with ui.row().classes("w-full gap-x-4 gap-y-1").props("wrap"):
                             fix_headers = ui.checkbox("Remove repeated headers/footers", value=True)
+                            fix_artifacts = ui.checkbox("Clean extraction artifacts", value=True)
                             fix_hyphenation = ui.checkbox("Repair hyphenation", value=True)
                             fix_lines = ui.checkbox("Join broken lines", value=True)
                             fix_whitespace = ui.checkbox("Normalize whitespace", value=True)
@@ -717,6 +757,7 @@ def build_interface(
                         remove_repeated_headers_footers, document_id, selected
                     )
                 for enabled, operation in (
+                    (fix_artifacts.value, "Clean extraction artifacts"),
                     (fix_hyphenation.value, "Repair hyphenation"),
                     (fix_lines.value, "Join broken lines"),
                     (fix_whitespace.value, "Normalize whitespace"),
@@ -743,6 +784,8 @@ def build_interface(
                 create_button.disable()
                 create_selected_button.disable()
                 progress_bar.value = 0
+                progress_percent.set_text("0.0%")
+                state["progress"] = (0.0, "Starting selected-page generation")
                 status.set_text("Starting selected-page generation…")
 
                 def report(value: float, message: str) -> None:
@@ -765,10 +808,14 @@ def build_interface(
                         ffprobe_path=ffprobe_path,
                         output_directory=str(OUTPUTS_DIR),
                         output_format=state["output_format"],
+                        use_pdf_bookmarks=state["use_pdf_bookmarks"],
+                        pdf_bookmark_depth=state["pdf_bookmark_depth"],
+                        skip_pdf_table_of_contents=state["skip_pdf_table_of_contents"],
                         progress=report,
                     )
                     show_output(result)
                     progress_bar.value = 1
+                    progress_percent.set_text("100.0%")
                     status.set_text("Finished selected-page generation.")
                     ui.notify("Selected pages created.", type="positive")
                 except (InferenceError, OSError, VoxBenchError) as error:
@@ -780,6 +827,15 @@ def build_interface(
                     create_selected_button.enable()
 
             section_table.on("row-click", select_table_row, js_handler="(_, row) => emit(row)")
+            pdf_chapter_toggle.on_value_change(
+                lambda event: state.__setitem__("use_pdf_bookmarks", bool(event.value))
+            )
+            skip_pdf_toc.on_value_change(
+                lambda event: state.__setitem__("skip_pdf_table_of_contents", bool(event.value))
+            )
+            pdf_chapter_depth.on_value_change(
+                lambda event: state.__setitem__("pdf_bookmark_depth", int(event.value))
+            )
             section_table.on_select(update_selected_count)
             page_input.on_value_change(select_page)
             page_navigator.on(
@@ -800,12 +856,15 @@ def build_interface(
                     return
                 state["document_id"] = documents[0][1]
             rows = await run.io_bound(_section_rows, state["document_id"])
+            manifest = await run.io_bound(load_manifest, state["document_id"])
             section_table.rows = rows
             section_table.selected = []
             section_table.update()
             selected_count.set_text("0 selected")
             page_total.set_text(f"/ {len(rows)}")
             set_ignore_button(state["ignore_empty_pages"])
+            source_chapter_controls.set_visibility(manifest.get("source_type") in {".pdf", ".epub"})
+            skip_pdf_toc.set_visibility(manifest.get("source_type") == ".pdf")
             state["selected_section_id"] = None
             state["editor_section_id"] = None
             state["editor_section_title"] = ""

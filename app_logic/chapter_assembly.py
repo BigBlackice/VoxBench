@@ -151,11 +151,16 @@ def select_folder_dialog(initial_directory: str | Path) -> str | None:
     return str(path)
 
 
-def create_batch_item(file_path: str, ffprobe_path: str) -> dict[str, Any]:
+def create_batch_item(
+    file_path: str,
+    ffprobe_path: str,
+    chapter_title: str | None = None,
+) -> dict[str, Any]:
     path = validate_audio_path(file_path)
     return {
         "path": str(path),
         "name": path.name,
+        "chapter_title": chapter_title,
         "duration_ms": audio_duration_ms(str(path), ffprobe_path),
         "volume_db": 0.0,
         "equalize": False,
@@ -366,16 +371,27 @@ def chapter_timeline(
     return chapters, total
 
 
-def ffmetadata_text(chapters: list[tuple[int, int]]) -> str:
+def ffmetadata_text(
+    chapters: list[tuple[int, int]],
+    titles: list[str] | None = None,
+) -> str:
     lines = [";FFMETADATA1"]
     for index, (start, end) in enumerate(chapters, start=1):
+        title = (titles or [])[index - 1] if titles and index <= len(titles) else f"Chapter {index}"
+        title = (
+            title.replace("\\", "\\\\")
+            .replace("\n", " ")
+            .replace("=", "\\=")
+            .replace(";", "\\;")
+            .replace("#", "\\#")
+        )
         lines.extend(
             [
                 "[CHAPTER]",
                 "TIMEBASE=1/1000",
                 f"START={start}",
                 f"END={end}",
-                f"title=Chapter {index}",
+                f"title={title}",
             ]
         )
     return "\n".join(lines) + "\n"
@@ -448,6 +464,10 @@ def assemble_chapters(
     for item in batch:
         validate_audio_path(item["path"])
     chapters, _ = chapter_timeline(batch, transition_mode, transition_ms)
+    chapter_titles = [
+        str(item.get("chapter_title") or f"Chapter {index}")
+        for index, item in enumerate(batch, start=1)
+    ]
 
     output_dir = resolve_output_directory(output_directory)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -509,7 +529,7 @@ def assemble_chapters(
 
         metadata_path = staging_dir / "chapters.ffmeta"
         filter_path = staging_dir / "filters.txt"
-        metadata_path.write_text(ffmetadata_text(chapters), encoding="utf-8")
+        metadata_path.write_text(ffmetadata_text(chapters, chapter_titles), encoding="utf-8")
         filter_path.write_text(";".join(filter_parts), encoding="utf-8")
         metadata_input = len(batch)
         command.extend(

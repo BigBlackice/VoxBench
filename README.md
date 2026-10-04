@@ -105,16 +105,21 @@ is excluded from Git because it may contain private voice data.
 ## Generated output
 
 Pasted text and documents are saved under the local `outputs/` folder. A
-document is processed one prepared section at a time and assembled into a
+document is processed one prepared page at a time and assembled into a
 chaptered M4B by default. The completed file can be played or downloaded
 directly from the page. Generated output is excluded from Git.
 
 Use the **Settings** button in the header to select the output type and adjust
 seed, sampling values, repetition penalty, chunk length, pause length, and
 loudness normalization. M4B is selected by default when FFmpeg and FFprobe are
-available. It writes a chapter per current document section (one PDF page per
-chapter until bookmark-aware chapter support is added). WAV remains available
-without FFmpeg; MP3, M4A, Ogg, and WebM require FFmpeg.
+available. It writes a chapter per current document page. In **Advanced
+editing**, PDF bookmarks can instead define output-only chapters without
+changing the editable page view; the default includes top-level bookmarks and
+their direct children. The default **Skip printed table of contents** option
+excludes only pages that strongly match bookmark titles and TOC dot leaders;
+those pages remain available in Advanced editing. EPUBs continue to use EPUB 3
+navigation or EPUB 2 NCX entries, including anchors inside a content file. WAV
+remains available without FFmpeg; MP3, M4A, Ogg, and WebM require FFmpeg.
 
 ## Chapter assembly
 

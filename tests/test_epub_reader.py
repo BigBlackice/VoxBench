@@ -3,7 +3,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from app_logic.epub_reader import EpubError, read_epub_spine
+from app_logic.epub_reader import EpubError, read_epub_document, read_epub_spine
 
 
 CONTAINER = """<?xml version="1.0"?>
@@ -29,6 +29,67 @@ def write_minimal_epub(path: Path, package: str, files: dict[str, str]) -> None:
 
 
 class EpubReaderTests(unittest.TestCase):
+    def test_reads_epub3_navigation_entries_and_anchors(self):
+        package = """<package xmlns="http://www.idpf.org/2007/opf">
+          <manifest>
+            <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+            <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+          </manifest>
+          <spine><itemref idref="one"/></spine>
+        </package>"""
+        navigation = """<html xmlns:epub="http://www.idpf.org/2007/ops"><body>
+          <nav epub:type="toc"><ol>
+            <li><a href="one.xhtml#opening">Opening</a><ol>
+              <li><a href="one.xhtml#part-two">Part two</a></li>
+            </ol></li>
+          </ol></nav>
+        </body></html>"""
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "book.epub"
+            write_minimal_epub(
+                source,
+                package,
+                {
+                    "book/nav.xhtml": navigation,
+                    "book/one.xhtml": "<h1 id='opening'>Opening</h1><p>First.</p><h1 id='part-two'>Part two</h1><p>Second.</p>",
+                },
+            )
+            chapters, entries = read_epub_document(source)
+
+        self.assertEqual([chapter.path for chapter in chapters], ["book/one.xhtml"])
+        self.assertEqual(
+            [(entry.title, entry.level, entry.path, entry.fragment) for entry in entries],
+            [
+                ("Opening", 0, "book/one.xhtml", "opening"),
+                ("Part two", 1, "book/one.xhtml", "part-two"),
+            ],
+        )
+
+    def test_reads_epub2_ncx_navigation(self):
+        package = """<package xmlns="http://www.idpf.org/2007/opf">
+          <manifest>
+            <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+            <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+          </manifest>
+          <spine toc="ncx"><itemref idref="one"/></spine>
+        </package>"""
+        ncx = """<ncx><navMap><navPoint><navLabel><text>Start</text></navLabel>
+          <content src="one.xhtml#start"/><navPoint><navLabel><text>Inside</text></navLabel>
+          <content src="one.xhtml#inside"/></navPoint></navPoint></navMap></ncx>"""
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "book.epub"
+            write_minimal_epub(
+                source,
+                package,
+                {"book/toc.ncx": ncx, "book/one.xhtml": "<p>Text</p>"},
+            )
+            _chapters, entries = read_epub_document(source)
+
+        self.assertEqual(
+            [(entry.title, entry.level, entry.fragment) for entry in entries],
+            [("Start", 0, "start"), ("Inside", 1, "inside")],
+        )
+
     def test_reads_spine_order_and_skips_navigation(self):
         package = """<package xmlns="http://www.idpf.org/2007/opf">
           <manifest>

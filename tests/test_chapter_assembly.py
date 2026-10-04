@@ -73,6 +73,11 @@ class ChapterAssemblyTests(unittest.TestCase):
         self.assertIn("title=Chapter 1", metadata)
         self.assertIn("title=Chapter 2", metadata)
 
+    def test_metadata_uses_source_chapter_titles(self):
+        metadata = ffmetadata_text([(0, 1000), (1000, 2500)], ["Opening", "Part 1"])
+        self.assertIn("title=Opening", metadata)
+        self.assertIn("title=Part 1", metadata)
+
     def test_folder_listing_only_contains_supported_audio(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -173,8 +178,8 @@ class ChapterAssemblyTests(unittest.TestCase):
                 sources.append(source)
 
             batch = [
-                create_batch_item(str(source), ffprobe)
-                for source in sources
+                create_batch_item(str(source), ffprobe, title)
+                for source, title in zip(sources, ("Opening", "Closing"))
             ]
             target = assemble_chapters(
                 batch,
@@ -200,8 +205,8 @@ class ChapterAssemblyTests(unittest.TestCase):
                 text=True,
                 check=True,
             )
-            self.assertIn("Chapter 1", result.stdout)
-            self.assertIn("Chapter 2", result.stdout)
+            self.assertIn("Opening", result.stdout)
+            self.assertIn("Closing", result.stdout)
 
 
 if __name__ == "__main__":

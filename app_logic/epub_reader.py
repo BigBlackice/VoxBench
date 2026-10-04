@@ -25,6 +25,14 @@ class EpubChapter:
     content: bytes
 
 
+@dataclass(frozen=True)
+class EpubNavigation:
+    title: str
+    level: int
+    path: str
+    fragment: str | None
+
+
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
@@ -116,8 +124,80 @@ def _package_path(
     raise EpubError("The EPUB does not identify a package document.")
 
 
-def read_epub_spine(source: Path) -> list[EpubChapter]:
-    """Return readable EPUB content documents in their declared spine order."""
+def _navigation_target(value: str, base: str) -> tuple[str, str | None]:
+    parsed = urlsplit(value)
+    if parsed.scheme or parsed.netloc:
+        raise EpubError("EPUB navigation outside the book is not supported.")
+    if not parsed.path:
+        return "", unquote(parsed.fragment) or None
+    return _safe_member_path(parsed.path, base=base), unquote(parsed.fragment) or None
+
+
+def _navigation_entries(
+    root: ElementTree.Element,
+    base: str,
+) -> list[EpubNavigation]:
+    nav = next(
+        (
+            element
+            for element in root.iter()
+            if _local_name(element.tag) == "nav"
+            and any("toc" in value.casefold() for value in element.attrib.values())
+        ),
+        None,
+    )
+    if nav is None:
+        return []
+    listing = next((item for item in nav.iter() if _local_name(item.tag) == "ol"), None)
+    if listing is None:
+        return []
+
+    entries: list[EpubNavigation] = []
+
+    def visit(container: ElementTree.Element, level: int) -> None:
+        for item in list(container):
+            if _local_name(item.tag) != "li":
+                continue
+            link = next((child for child in list(item) if _local_name(child.tag) == "a"), None)
+            if link is not None and link.get("href", ""):
+                path, fragment = _navigation_target(link.get("href", ""), base)
+                title = " ".join("".join(link.itertext()).split())
+                if path and title:
+                    entries.append(EpubNavigation(title, level, path, fragment))
+            for child in list(item):
+                if _local_name(child.tag) == "ol":
+                    visit(child, level + 1)
+
+    visit(listing, 0)
+    return entries
+
+
+def _ncx_entries(root: ElementTree.Element, base: str) -> list[EpubNavigation]:
+    navigation = next((item for item in root.iter() if _local_name(item.tag) == "navMap"), None)
+    if navigation is None:
+        return []
+    entries: list[EpubNavigation] = []
+
+    def visit(point: ElementTree.Element, level: int) -> None:
+        label = next((item for item in point.iter() if _local_name(item.tag) == "navLabel"), None)
+        content = next((item for item in point.iter() if _local_name(item.tag) == "content"), None)
+        title = " ".join("".join(label.itertext()).split()) if label is not None else ""
+        if content is not None and content.get("src", "") and title:
+            path, fragment = _navigation_target(content.get("src", ""), base)
+            if path:
+                entries.append(EpubNavigation(title, level, path, fragment))
+        for child in list(point):
+            if _local_name(child.tag) == "navPoint":
+                visit(child, level + 1)
+
+    for point in list(navigation):
+        if _local_name(point.tag) == "navPoint":
+            visit(point, 0)
+    return entries
+
+
+def read_epub_document(source: Path) -> tuple[list[EpubChapter], list[EpubNavigation]]:
+    """Return EPUB spine content and its EPUB 3 or EPUB 2 navigation entries."""
     try:
         archive = zipfile.ZipFile(source)
     except (OSError, zipfile.BadZipFile) as error:
@@ -148,6 +228,7 @@ def read_epub_spine(source: Path) -> list[EpubChapter]:
 
         manifest: dict[str, tuple[str, str, set[str]]] = {}
         spine: list[str] = []
+        spine_toc = ""
         for element in package.iter():
             name = _local_name(element.tag)
             if name == "item":
@@ -163,6 +244,45 @@ def read_epub_spine(source: Path) -> list[EpubChapter]:
                 idref = element.get("idref", "")
                 if idref:
                     spine.append(idref)
+            elif name == "spine":
+                spine_toc = element.get("toc", "")
+
+        nav_path = next(
+            (path for path, _media_type, properties in manifest.values() if "nav" in properties),
+            "",
+        )
+        ncx_path = ""
+        if spine_toc and spine_toc in manifest:
+            ncx_path = manifest[spine_toc][0]
+        if not ncx_path:
+            ncx_path = next(
+                (
+                    path
+                    for path, media_type, _properties in manifest.values()
+                    if media_type == "application/x-dtbncx+xml"
+                ),
+                "",
+            )
+        navigation: list[EpubNavigation] = []
+        try:
+            if nav_path:
+                navigation = _navigation_entries(
+                    _parse_xml(
+                        _read_member(archive, members, nav_path, maximum_size=MAX_CONTENT_BYTES),
+                        "navigation document",
+                    ),
+                    posixpath.dirname(nav_path),
+                )
+            elif ncx_path:
+                navigation = _ncx_entries(
+                    _parse_xml(
+                        _read_member(archive, members, ncx_path, maximum_size=MAX_XML_BYTES),
+                        "NCX table of contents",
+                    ),
+                    posixpath.dirname(ncx_path),
+                )
+        except EpubError:
+            navigation = []
 
         chapters = []
         seen: set[str] = set()
@@ -190,4 +310,10 @@ def read_epub_spine(source: Path) -> list[EpubChapter]:
                     ),
                 )
             )
-        return chapters
+        spine_paths = {chapter.path for chapter in chapters}
+        return chapters, [entry for entry in navigation if entry.path in spine_paths]
+
+
+def read_epub_spine(source: Path) -> list[EpubChapter]:
+    """Return readable EPUB content documents in their declared spine order."""
+    return read_epub_document(source)[0]

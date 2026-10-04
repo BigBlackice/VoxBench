@@ -14,8 +14,8 @@ from bs4 import BeautifulSoup
 
 from webui.config import OUTPUTS_DIR, PROJECT_DIR
 from app_logic.docx_reader import DocxError, read_docx_sections
-from app_logic.epub_reader import EpubError, read_epub_spine
-from app_logic.pdf_reader import PdfError, read_pdf_pages
+from app_logic.epub_reader import EpubError, EpubNavigation, read_epub_document
+from app_logic.pdf_reader import PdfChapter, PdfError, pdf_page_count, read_pdf_document
 
 
 DOCUMENTS_DIR = PROJECT_DIR / "documents"
@@ -50,6 +50,28 @@ SAFE_EPUB_TAGS = {
     "th",
     "td",
 }
+BOOKMARK_MATCH_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+    }
+)
+EXTRACTION_CLEANUP_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+    }
+)
 
 
 def _safe_name(value: str) -> str:
@@ -118,6 +140,8 @@ def _new_section(
     text: str,
     source_html: str = "",
     source_page: int | None = None,
+    chapter_title: str | None = None,
+    chapter_level: int | None = None,
 ) -> dict[str, Any]:
     return {
         "id": uuid.uuid4().hex[:12],
@@ -126,6 +150,8 @@ def _new_section(
         "text": text,
         "source_html": source_html,
         "source_page": source_page,
+        "chapter_title": chapter_title,
+        "chapter_level": chapter_level,
         "status": "Needs review",
         "audio_path": None,
     }
@@ -136,6 +162,11 @@ def _clean_extracted_text(text: str) -> str:
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _bookmark_match_text(text: str) -> str:
+    """Normalize common typographic variants without altering saved text."""
+    return text.translate(BOOKMARK_MATCH_TRANSLATION)
 
 
 def _safe_epub_html(content: bytes) -> tuple[str, str, str | None]:
@@ -154,11 +185,48 @@ def _safe_epub_html(content: bytes) -> tuple[str, str, str | None]:
     return text, str(soup), title
 
 
-def _extract_pdf(source: Path) -> list[dict[str, Any]]:
-    try:
-        pages = read_pdf_pages(source)
-    except PdfError as error:
-        raise VoxBenchError(str(error)) from error
+def _split_epub_navigation(
+    content: bytes,
+    entries: list[EpubNavigation],
+) -> list[tuple[EpubNavigation | None, bytes]]:
+    """Split one EPUB spine item at its table-of-contents anchors."""
+    if not entries:
+        return [(None, content)]
+
+    source = content.decode("utf-8", errors="replace")
+    boundaries: list[tuple[int, EpubNavigation]] = []
+    for entry in entries:
+        if not entry.fragment:
+            boundaries.append((0, entry))
+            continue
+        match = re.search(
+            r"<[^>]*\b(?:id|name)\s*=\s*(['\"])"
+            + re.escape(entry.fragment)
+            + r"\1[^>]*>",
+            source,
+            re.IGNORECASE,
+        )
+        if match:
+            boundaries.append((match.start(), entry))
+    if not boundaries:
+        return [(entries[0], content)]
+    if min(offset for offset, _entry in boundaries) > 0:
+        boundaries.append((0, entries[0]))
+
+    unique_boundaries: list[tuple[int, EpubNavigation]] = []
+    for offset, entry in sorted(boundaries, key=lambda item: item[0]):
+        if not unique_boundaries or offset != unique_boundaries[-1][0]:
+            unique_boundaries.append((offset, entry))
+    return [
+        (entry, source[offset:next_offset].encode("utf-8"))
+        for (offset, entry), (next_offset, _next_entry) in zip(
+            unique_boundaries,
+            unique_boundaries[1:] + [(len(source), unique_boundaries[-1][1])],
+        )
+    ]
+
+
+def _pdf_page_sections(pages: list[Any]) -> list[dict[str, Any]]:
     return [
         _new_section(
             title=f"Page {page.number}",
@@ -167,6 +235,14 @@ def _extract_pdf(source: Path) -> list[dict[str, Any]]:
         )
         for page in pages
     ]
+
+
+def _extract_pdf(source: Path) -> list[dict[str, Any]]:
+    try:
+        pages, _chapters = read_pdf_document(source)
+    except PdfError as error:
+        raise VoxBenchError(str(error)) from error
+    return _pdf_page_sections(pages)
 
 
 def _extract_docx(source: Path) -> list[dict[str, Any]]:
@@ -187,22 +263,31 @@ def _extract_docx(source: Path) -> list[dict[str, Any]]:
 def _extract_epub(source: Path) -> list[dict[str, Any]]:
     sections = []
     try:
-        chapters = read_epub_spine(source)
+        chapters, navigation = read_epub_document(source)
     except EpubError as error:
         raise VoxBenchError(str(error)) from error
 
+    navigation_by_path: dict[str, list[EpubNavigation]] = {}
+    for entry in navigation:
+        navigation_by_path.setdefault(entry.path, []).append(entry)
     for chapter in chapters:
-        text, source_html, detected_title = _safe_epub_html(chapter.content)
-        if not text:
-            continue
-        title = detected_title or f"Chapter {len(sections) + 1}"
-        sections.append(
-            _new_section(
-                title=title,
-                text=text,
-                source_html=source_html,
+        for entry, content in _split_epub_navigation(
+            chapter.content,
+            navigation_by_path.get(chapter.path, []),
+        ):
+            text, source_html, detected_title = _safe_epub_html(content)
+            if not text:
+                continue
+            title = (entry.title if entry else None) or detected_title or f"Chapter {len(sections) + 1}"
+            sections.append(
+                _new_section(
+                    title=title,
+                    text=text,
+                    source_html=source_html,
+                    chapter_title=entry.title if entry else None,
+                    chapter_level=entry.level if entry else None,
+                )
             )
-        )
     return sections
 
 
@@ -226,12 +311,20 @@ def import_document(file_path: str, source_name: str | None = None) -> str:
     shutil.copy2(source, stored_source)
 
     try:
+        source_type = source.suffix.lower()
         extractors = {
             ".docx": _extract_docx,
             ".epub": _extract_epub,
-            ".pdf": _extract_pdf,
         }
-        sections = extractors[source.suffix.lower()](stored_source)
+        pdf_bookmarks: list[PdfChapter] = []
+        if source_type == ".pdf":
+            try:
+                pages, pdf_bookmarks = read_pdf_document(stored_source)
+            except PdfError as error:
+                raise VoxBenchError(str(error)) from error
+            sections = _pdf_page_sections(pages)
+        else:
+            sections = extractors[source_type](stored_source)
         if not sections:
             raise VoxBenchError("No readable text sections were found.")
         for section in sections:
@@ -242,7 +335,11 @@ def import_document(file_path: str, source_name: str | None = None) -> str:
                 "title": Path(display_name).stem,
                 "source_name": display_name,
                 "source_path": str(stored_source),
-                "source_type": source.suffix.lower(),
+                "source_type": source_type,
+                "pdf_bookmarks": [
+                    {"title": item.title, "level": item.level, "page": item.page}
+                    for item in pdf_bookmarks
+                ],
                 "created_at": datetime.now().isoformat(timespec="seconds"),
                 "sections": [section["id"] for section in sections],
             }
@@ -264,6 +361,270 @@ def list_documents() -> list[tuple[str, str]]:
         except (OSError, KeyError, json.JSONDecodeError):
             continue
     return sorted(documents, key=lambda item: item[1], reverse=True)
+
+
+def document_page_count(document_id: str) -> int:
+    """Return the source PDF page count, or section count for reflowable files."""
+    manifest = load_manifest(document_id)
+    if manifest.get("source_type") != ".pdf":
+        return len(manifest["sections"])
+    try:
+        return pdf_page_count(Path(manifest["source_path"]))
+    except (KeyError, PdfError):
+        return len(manifest["sections"])
+
+
+def _bookmark_pattern(title: str) -> re.Pattern[str] | None:
+    words = _bookmark_match_text(title).split()
+    if not words:
+        return None
+    number = r"\d+(?:\.\d+)*(?:\.)?"
+    return re.compile(
+        r"(?<!\w)(?:"
+        + number
+        + r"[ \t]+)?"
+        + r"\s+".join(re.escape(word) for word in words)
+        + r"(?:[ \t]+"
+        + number
+        + r")?(?!\w)",
+        re.IGNORECASE,
+    )
+
+
+def _pdf_bookmark_parts(
+    text: str,
+    bookmarks: list[PdfChapter],
+) -> list[tuple[str | None, str]]:
+    """Return page text fragments, with a title where a bookmark begins."""
+    parts: list[tuple[str | None, str]] = []
+    match_text = _bookmark_match_text(text)
+    cursor = 0
+    found_boundary = False
+    for bookmark in bookmarks:
+        pattern = _bookmark_pattern(bookmark.title)
+        match = pattern.search(match_text, cursor) if pattern else None
+        if match is not None:
+            before = text[cursor:match.start()].strip()
+            if before:
+                parts.append((None, before))
+            parts.append((bookmark.title, ""))
+            cursor = match.end()
+            found_boundary = True
+        elif not found_boundary:
+            parts.append((bookmark.title, ""))
+            found_boundary = True
+    tail = text[cursor:].strip()
+    if tail:
+        parts.append((None, tail))
+    return parts or [(None, text)]
+
+
+def _without_leading_chapter_title(text: str, title: str) -> str:
+    pattern = _bookmark_pattern(title)
+    match = pattern.match(_bookmark_match_text(text)) if pattern else None
+    return text[match.end():].lstrip() if match else text
+
+
+def _manifest_pdf_bookmarks(manifest: dict[str, Any]) -> list[PdfChapter]:
+    bookmarks = []
+    for item in manifest.get("pdf_bookmarks", []):
+        try:
+            bookmarks.append(PdfChapter(item["title"], int(item["level"]), int(item["page"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return bookmarks
+
+
+def table_of_contents_section_ids(
+    document_id: str,
+    section_ids: list[str],
+) -> list[str]:
+    """Return selected PDF pages that strongly match a printed contents page."""
+    manifest = load_manifest(document_id)
+    if manifest.get("source_type") != ".pdf":
+        return []
+    bookmarks = _manifest_pdf_bookmarks(manifest)
+    if not bookmarks:
+        return []
+    top_level = min(item.level for item in bookmarks)
+    first_chapter_page = min(item.page for item in bookmarks if item.level == top_level)
+    selected = set(section_ids)
+    skipped = []
+    for section_id in manifest["sections"]:
+        if section_id not in selected:
+            continue
+        section = load_section(document_id, section_id)
+        if int(section.get("source_page") or 0) >= first_chapter_page:
+            continue
+        text = section["text"]
+        leader_lines = sum(
+            bool(re.search(r"(?:\.\s*){3,}\d+\s*$", line))
+            for line in text.splitlines()
+        )
+        title_matches = sum(
+            bool(pattern and pattern.search(_bookmark_match_text(text)))
+            for pattern in (_bookmark_pattern(item.title) for item in bookmarks)
+        )
+        if leader_lines >= 2 and title_matches >= 3:
+            skipped.append(section_id)
+    return skipped
+
+
+def document_generation_groups(
+    document_id: str,
+    section_ids: list[str],
+    *,
+    use_pdf_bookmarks: bool,
+    bookmark_depth: int,
+) -> list[dict[str, Any]]:
+    """Group editable pages into output chapters without changing the editor."""
+    manifest = load_manifest(document_id)
+    selected = set(section_ids)
+    ordered_selected = [item for item in manifest["sections"] if item in selected]
+    if not ordered_selected:
+        return []
+    page_positions = {section_id: index for index, section_id in enumerate(ordered_selected, start=1)}
+
+    def page_groups() -> list[dict[str, Any]]:
+        groups = []
+        for section_id in ordered_selected:
+            section = load_section(document_id, section_id)
+            groups.append(
+                {
+                    "title": section["title"],
+                    "is_bookmark": False,
+                    "parts": [{
+                        "section_id": section_id,
+                        "page_index": page_positions[section_id],
+                        "text": section["text"],
+                    }],
+                }
+            )
+        return groups
+
+    if not use_pdf_bookmarks:
+        return page_groups()
+
+    if manifest.get("source_type") == ".epub":
+        groups: list[dict[str, Any]] = []
+        current_title: str | None = None
+        current_is_bookmark = False
+        current_parts: list[dict[str, Any]] = []
+
+        def finish_group() -> None:
+            nonlocal current_parts
+            if current_parts:
+                groups.append(
+                    {
+                        "title": current_title or "Untitled chapter",
+                        "is_bookmark": current_is_bookmark,
+                        "parts": current_parts,
+                    }
+                )
+            current_parts = []
+
+        for section_id in manifest["sections"]:
+            section = load_section(document_id, section_id)
+            title = section.get("chapter_title")
+            level = section.get("chapter_level")
+            try:
+                is_chapter = bool(title) and int(level) <= max(0, int(bookmark_depth))
+            except (TypeError, ValueError):
+                is_chapter = False
+            if section_id not in selected:
+                finish_group()
+                if is_chapter:
+                    current_title = title
+                    current_is_bookmark = True
+                continue
+            if is_chapter:
+                finish_group()
+                current_title = title
+                current_is_bookmark = True
+            if current_title is None:
+                groups.append(
+                    {
+                        "title": section["title"],
+                        "is_bookmark": False,
+                        "parts": [{
+                            "section_id": section_id,
+                            "page_index": page_positions[section_id],
+                            "text": section["text"],
+                        }],
+                    }
+                )
+                continue
+            current_parts.append(
+                {
+                    "section_id": section_id,
+                    "page_index": page_positions[section_id],
+                    "text": _without_leading_chapter_title(section["text"], title)
+                    if is_chapter else section["text"],
+                }
+            )
+        finish_group()
+        return groups
+
+    if manifest.get("source_type") != ".pdf":
+        return page_groups()
+
+    bookmarks_by_page: dict[int, list[PdfChapter]] = {}
+    for bookmark in _manifest_pdf_bookmarks(manifest):
+        if bookmark.level <= max(0, int(bookmark_depth)):
+            bookmarks_by_page.setdefault(bookmark.page, []).append(bookmark)
+    if not bookmarks_by_page:
+        return page_groups()
+
+    groups: list[dict[str, Any]] = []
+    current_title: str | None = None
+    current_is_bookmark = False
+    current_parts: list[dict[str, Any]] = []
+
+    def finish_group() -> None:
+        nonlocal current_parts
+        if current_parts:
+            groups.append(
+                {
+                    "title": current_title or "Untitled chapter",
+                    "is_bookmark": current_is_bookmark,
+                    "parts": current_parts,
+                }
+            )
+        current_parts = []
+
+    for section_id in manifest["sections"]:
+        section = load_section(document_id, section_id)
+        source_page = int(section.get("source_page") or 0)
+        parts = _pdf_bookmark_parts(
+            section["text"],
+            bookmarks_by_page.get(source_page, []),
+        )
+        if section_id not in selected:
+            finish_group()
+            for title, _text in parts:
+                if title:
+                    current_title = title
+                    current_is_bookmark = True
+            continue
+        for title, text in parts:
+            if title:
+                finish_group()
+                current_title = title
+                current_is_bookmark = True
+            if not text:
+                continue
+            if current_title is None:
+                current_title = section["title"]
+                current_is_bookmark = False
+            current_parts.append(
+                {
+                    "section_id": section_id,
+                    "page_index": page_positions[section_id],
+                    "text": text,
+                }
+            )
+    finish_group()
+    return groups
 
 
 def clear_document_projects() -> int:
@@ -389,6 +750,14 @@ def set_empty_sections_ignored(document_id: str, ignored: bool) -> int:
 
 
 def clean_text(text: str, operation: str) -> str:
+    if operation == "Clean extraction artifacts":
+        text = text.translate(EXTRACTION_CLEANUP_TRANSLATION)
+        text = "".join(
+            character
+            for character in text
+            if not (0xFDD0 <= ord(character) <= 0xFDEF or ord(character) & 0xFFFE == 0xFFFE)
+        )
+        return re.sub(r"(?m)^[ \t]*[•◦▪‣][ \t]*", "", text)
     if operation == "Join broken lines":
         return re.sub(r"(?<!\n)\n(?!\n)", " ", text)
     if operation == "Repair hyphenation":
@@ -494,6 +863,7 @@ def prepare_entire_document(document_id: str) -> list[str]:
     manifest = load_manifest(document_id)
     ready: list[str] = []
     operations = [
+        "Clean extraction artifacts",
         "Repair hyphenation",
         "Join broken lines",
         "Normalize whitespace",

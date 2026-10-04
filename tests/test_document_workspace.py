@@ -8,6 +8,8 @@ import numpy as np
 import soundfile as sf
 from docx import Document
 
+from app_logic.epub_reader import EpubChapter, EpubNavigation
+from app_logic.pdf_reader import PdfChapter, PdfPage
 from tests.pdf_fixture import write_blank_pdf
 from app_logic import workspace as document_workspace
 from webui.errors import VoxBenchError
@@ -61,6 +63,220 @@ def write_epub(path: Path) -> None:
 
 
 class DocumentWorkspaceTests(unittest.TestCase):
+    def test_pdf_import_keeps_one_editable_section_per_page(self):
+        pages = [
+            PdfPage(
+                1,
+                "Preface text.\nChapter One\nFirst chapter.\nChapter Two\nSecond chapter.",
+            )
+        ]
+        chapters = [
+            PdfChapter("Chapter One", 0, 1),
+            PdfChapter("Chapter Two", 0, 1),
+        ]
+        with patch.object(document_workspace, "read_pdf_document", return_value=(pages, chapters)):
+            sections = document_workspace._extract_pdf(Path("book.pdf"))
+
+        self.assertEqual([section["title"] for section in sections], ["Page 1"])
+        self.assertIn("Chapter One", sections[0]["text"])
+        self.assertIn("Chapter Two", sections[0]["text"])
+
+    def test_pdf_bookmarks_group_output_at_selected_depth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "bookmarks"
+                (documents / document_id).mkdir(parents=True)
+                section = document_workspace._new_section(
+                    "Page 1",
+                    "Preface\n1. Introduction\nText\n1.1 Overview\nMore\n1.1.1 Detail\nDeep text",
+                    source_page=1,
+                )
+                document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "source_type": ".pdf",
+                        "sections": [section["id"]],
+                        "pdf_bookmarks": [
+                            {"title": "Introduction", "level": 0, "page": 1},
+                            {"title": "Overview", "level": 1, "page": 1},
+                            {"title": "Detail", "level": 2, "page": 1},
+                        ],
+                    }
+                )
+
+                grouped = document_workspace.document_generation_groups(
+                    document_id,
+                    [section["id"]],
+                    use_pdf_bookmarks=True,
+                    bookmark_depth=1,
+                )
+                pages = document_workspace.document_generation_groups(
+                    document_id,
+                    [section["id"]],
+                    use_pdf_bookmarks=False,
+                    bookmark_depth=1,
+                )
+
+        self.assertEqual([group["title"] for group in grouped], [
+            "Page 1", "Introduction", "Overview",
+        ])
+        self.assertEqual(
+            [group["is_bookmark"] for group in grouped], [False, True, True]
+        )
+        self.assertIn(
+            "1.1.1 Detail",
+            "\n".join(part["text"] for part in grouped[-1]["parts"]),
+        )
+        self.assertEqual([group["title"] for group in pages], ["Page 1"])
+
+    def test_epub_navigation_groups_output_at_selected_depth(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "epub_navigation"
+                (documents / document_id).mkdir(parents=True)
+                sections = [
+                    document_workspace._new_section(
+                        "Opening", "Opening\nFirst chapter.",
+                        chapter_title="Opening", chapter_level=0,
+                    ),
+                    document_workspace._new_section(
+                        "Part one", "Part one\nSecond chapter.",
+                        chapter_title="Part one", chapter_level=1,
+                    ),
+                    document_workspace._new_section(
+                        "Detail", "Detail\nNested text.",
+                        chapter_title="Detail", chapter_level=2,
+                    ),
+                ]
+                for section in sections:
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "source_type": ".epub",
+                        "sections": [section["id"] for section in sections],
+                    }
+                )
+
+                grouped = document_workspace.document_generation_groups(
+                    document_id,
+                    [section["id"] for section in sections],
+                    use_pdf_bookmarks=True,
+                    bookmark_depth=1,
+                )
+
+        self.assertEqual([group["title"] for group in grouped], ["Opening", "Part one"])
+        self.assertTrue(all(group["is_bookmark"] for group in grouped))
+        self.assertEqual(grouped[0]["parts"][0]["text"], "First chapter.")
+        self.assertIn("Detail", grouped[1]["parts"][1]["text"])
+
+    def test_chapterless_epub_and_pdf_keep_page_groups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                for source_type in (".epub", ".pdf"):
+                    document_id = source_type[1:]
+                    (documents / document_id).mkdir(parents=True)
+                    sections = [
+                        document_workspace._new_section("One", "First."),
+                        document_workspace._new_section("Two", "Second."),
+                    ]
+                    for section in sections:
+                        document_workspace.save_section(document_id, section)
+                    document_workspace.save_manifest(
+                        {
+                            "id": document_id,
+                            "source_type": source_type,
+                            "sections": [section["id"] for section in sections],
+                        }
+                    )
+                    grouped = document_workspace.document_generation_groups(
+                        document_id,
+                        [section["id"] for section in sections],
+                        use_pdf_bookmarks=True,
+                        bookmark_depth=1,
+                    )
+                    self.assertEqual([group["title"] for group in grouped], ["One", "Two"])
+                    self.assertTrue(all(not group["is_bookmark"] for group in grouped))
+
+    def test_detects_only_strong_pdf_table_of_contents_pages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "toc"
+                (documents / document_id).mkdir(parents=True)
+                toc = document_workspace._new_section(
+                    "Page 1",
+                    "Introduction . . . 2\nUser Guide . . . 3\nDeveloper Guide . . . 4",
+                    source_page=1,
+                )
+                chapter = document_workspace._new_section(
+                    "Page 2", "Introduction\nNormal chapter text.", source_page=2
+                )
+                for section in (toc, chapter):
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "source_type": ".pdf",
+                        "sections": [toc["id"], chapter["id"]],
+                        "pdf_bookmarks": [
+                            {"title": "Introduction", "level": 0, "page": 2},
+                            {"title": "User Guide", "level": 0, "page": 3},
+                            {"title": "Developer Guide", "level": 0, "page": 4},
+                        ],
+                    }
+                )
+
+                skipped = document_workspace.table_of_contents_section_ids(
+                    document_id, [toc["id"], chapter["id"]]
+                )
+
+        self.assertEqual(skipped, [toc["id"]])
+
+    def test_epub_navigation_anchors_split_one_spine_item(self):
+        chapter = EpubChapter(
+            "book.xhtml",
+            b"<html><body><h1 id='first'>First</h1><p>One.</p><h1 id='second'>Second</h1><p>Two.</p></body></html>",
+        )
+        navigation = [
+            EpubNavigation("First", 0, "book.xhtml", "first"),
+            EpubNavigation("Second", 1, "book.xhtml", "second"),
+        ]
+        with patch.object(
+            document_workspace,
+            "read_epub_document",
+            return_value=([chapter], navigation),
+        ):
+            sections = document_workspace._extract_epub(Path("book.epub"))
+
+        self.assertEqual([section["title"] for section in sections], ["First", "Second"])
+        self.assertEqual([section["chapter_level"] for section in sections], [0, 1])
+        self.assertIn("One.", sections[0]["text"])
+        self.assertNotIn("Two.", sections[0]["text"])
+
+    def test_unmatched_epub_anchor_keeps_preceding_content(self):
+        chapter = EpubChapter(
+            "book.xhtml",
+            b"<html><body><p>Intro.</p><h1 id='second'>Second</h1><p>Two.</p></body></html>",
+        )
+        navigation = [
+            EpubNavigation("Opening", 0, "book.xhtml", "missing"),
+            EpubNavigation("Second", 0, "book.xhtml", "second"),
+        ]
+        with patch.object(
+            document_workspace,
+            "read_epub_document",
+            return_value=([chapter], navigation),
+        ):
+            sections = document_workspace._extract_epub(Path("book.epub"))
+
+        self.assertEqual([section["title"] for section in sections], ["Opening", "Second"])
+        self.assertIn("Intro.", sections[0]["text"])
+
     def test_document_source_rejects_project_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(document_workspace, "DOCUMENTS_DIR", Path(directory) / "documents"):
@@ -134,6 +350,13 @@ class DocumentWorkspaceTests(unittest.TestCase):
                     ],
                     "Second line",
                 )
+
+    def test_cleans_safe_extraction_artifacts(self):
+        cleaned = document_workspace.clean_text(
+            "\u2022 Arch\u2019s\u00a0guide\ufffe\n\u2022 Next item",
+            "Clean extraction artifacts",
+        )
+        self.assertEqual(cleaned, "Arch's guide\nNext item")
 
     def test_ignores_an_empty_section_until_it_contains_text(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -256,6 +479,7 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 )
                 self.assertEqual(first["title"], "Page 1")
                 self.assertEqual(first["source_page"], 1)
+                self.assertEqual(document_workspace.document_page_count(document_id), 2)
 
     def test_imports_epub_spine_and_preserves_source_html(self):
         with tempfile.TemporaryDirectory() as directory:

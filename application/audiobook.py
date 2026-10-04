@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -12,11 +13,12 @@ from app_logic.audio_processing import join_audio_chunks
 from app_logic.chapter_assembly import assemble_chapters, create_batch_item
 from app_logic.workspace import (
     clear_document_audio_paths,
+    document_generation_groups,
     import_document,
     load_manifest,
     load_section,
     prepare_entire_document,
-    save_document_audio,
+    table_of_contents_section_ids,
 )
 from webui.errors import VoxBenchError
 from app_logic.storage import save_generated_audio
@@ -69,6 +71,7 @@ def _synthesize_chunks(
     progress: ProgressCallback,
     progress_start: float,
     progress_span: float,
+    progress_label: str | None = None,
 ) -> Iterator[tuple[int, np.ndarray, bool]]:
     """Yield validated generated chunks without retaining completed audio."""
     chunks = split_text(text, settings.max_chunk_chars)
@@ -78,7 +81,7 @@ def _synthesize_chunks(
     for index, chunk in enumerate(chunks, start=1):
         progress(
             progress_start + progress_span * (index - 1) / len(chunks),
-            f"Generating chunk {index} of {len(chunks)}",
+            progress_label or f"Generating chunk {index} of {len(chunks)}",
         )
         result = synthesize_chunk(
             SynthesisRequest(
@@ -137,39 +140,79 @@ def _synthesize_text_to_wav(
     progress_start: float,
     progress_span: float,
 ) -> tuple[int, Path]:
-    """Stream one document section to WAV without retaining its chunks in RAM."""
+    """Stream one text value to WAV without retaining its chunks in RAM."""
+    return _synthesize_parts_to_wav(
+        backend,
+        synthesize_chunk,
+        [(text, progress_start, progress_span, None, None)],
+        reference_audio,
+        settings,
+        progress,
+    )
+
+
+def _synthesize_parts_to_wav(
+    backend: InferenceBackend,
+    synthesize_chunk: Callable[[SynthesisRequest], AudioResult],
+    parts: list[tuple[str, float, float, str | None, int | None]],
+    reference_audio: str | None,
+    settings: SynthesisSettings,
+    progress: ProgressCallback,
+    end_silence_ms: int = 0,
+) -> tuple[int, Path]:
+    """Stream ordered text parts into one WAV without retaining audio chunks."""
     with NamedTemporaryFile(prefix="voxbench_section_", suffix=".wav", delete=False) as temporary:
         target = Path(temporary.name)
     sample_rate = backend.sample_rate
     writer: sf.SoundFile | None = None
-    silence: np.ndarray | None = None
+    silences: dict[int, np.ndarray] = {}
+    has_audio = False
     try:
-        for sample_rate, samples, has_previous in _synthesize_chunks(
-            synthesize_chunk,
-            text,
-            reference_audio,
-            settings,
-            progress,
-            progress_start,
-            progress_span,
-        ):
-            if writer is None:
-                writer = sf.SoundFile(
-                    target,
-                    mode="w",
-                    samplerate=sample_rate,
-                    channels=1,
-                    format="WAV",
-                    subtype="PCM_16",
-                )
-                silence = np.zeros(
-                    round(sample_rate * settings.pause_ms / 1000.0),
-                    dtype=np.float32,
-                )
-            elif has_previous and silence is not None and silence.size:
+        for text, progress_start, progress_span, progress_label, pause_before_ms in parts:
+            for sample_rate, samples, _has_previous in _synthesize_chunks(
+                synthesize_chunk,
+                text,
+                reference_audio,
+                settings,
+                progress,
+                progress_start,
+                progress_span,
+                progress_label,
+            ):
+                if writer is None:
+                    writer = sf.SoundFile(
+                        target,
+                        mode="w",
+                        samplerate=sample_rate,
+                        channels=1,
+                        format="WAV",
+                        subtype="PCM_16",
+                    )
+                elif has_audio:
+                    pause_ms = (
+                        pause_before_ms
+                        if _has_previous is False and pause_before_ms is not None
+                        else settings.pause_ms
+                    )
+                    silence = silences.get(pause_ms)
+                    if silence is None:
+                        silence = np.zeros(round(sample_rate * pause_ms / 1000.0), dtype=np.float32)
+                        silences[pause_ms] = silence
+                    if silence.size:
+                        writer.write(silence)
+                writer.write(samples)
+                has_audio = True
+        if writer is not None and has_audio and end_silence_ms:
+            silence = silences.get(end_silence_ms)
+            if silence is None:
+                silence = np.zeros(round(sample_rate * end_silence_ms / 1000.0), dtype=np.float32)
+                silences[end_silence_ms] = silence
+            if silence.size:
                 writer.write(silence)
-            writer.write(samples)
-        progress(progress_start + progress_span, "Writing generated audio")
+        progress(
+            max(start + span for _text, start, span, _label, _pause in parts),
+            "Writing generated audio",
+        )
         return sample_rate, target
     except Exception:
         if writer is not None:
@@ -194,11 +237,14 @@ def _create_audiobook(
     output_directory: str,
     document_id: str | None = None,
     section_ids: list[str] | None = None,
+    use_pdf_bookmarks: bool = True,
+    pdf_bookmark_depth: int = 1,
+    skip_pdf_table_of_contents: bool = True,
     output_format: str = ".m4b",
     progress: ProgressCallback = lambda _value, _message: None,
     synthesize_chunk: Callable[[SynthesisRequest], AudioResult] | None = None,
 ) -> AudiobookResult:
-    """Create an audiobook, using document sections as chapter boundaries."""
+    """Create an audiobook from editable document pages and output chapters."""
     synthesize_chunk = synthesize_chunk or backend.synthesize
     if output_format not in SUPPORTED_AUDIOBOOK_FORMATS:
         raise VoxBenchError("Unsupported audiobook format.")
@@ -225,36 +271,89 @@ def _create_audiobook(
                     sections_to_generate.append(section_id)
         if not sections_to_generate:
             raise VoxBenchError("The document contains no readable text.")
-        generated_paths: list[Path] = []
+        if skip_pdf_table_of_contents:
+            contents_pages = set(table_of_contents_section_ids(document_id, sections_to_generate))
+            sections_to_generate = [
+                section_id for section_id in sections_to_generate if section_id not in contents_pages
+            ]
+        if not sections_to_generate:
+            raise VoxBenchError("Only table-of-contents pages were selected.")
+        groups = document_generation_groups(
+            document_id,
+            sections_to_generate,
+            use_pdf_bookmarks=use_pdf_bookmarks,
+            bookmark_depth=pdf_bookmark_depth,
+        )
+        generated_paths: list[tuple[Path, str]] = []
+        has_bookmark_chapters = any(group.get("is_bookmark") for group in groups)
+        page_counts = Counter(
+            page_index
+            for group in groups
+            for page_index in {part["page_index"] for part in group["parts"]}
+        )
+        part_slots: Counter[int] = Counter()
         try:
-            for section_index, section_id in enumerate(sections_to_generate, start=1):
-                section = load_section(document_id, section_id)
-                start = (section_index - 1) / len(sections_to_generate)
-                sample_rate, temporary_wav = _synthesize_text_to_wav(
+            bookmark_number = 0
+            for group in groups:
+                page_parts: dict[int, list[str]] = {}
+                for part in group["parts"]:
+                    page_parts.setdefault(part["page_index"], []).append(part["text"])
+                parts: list[tuple[str, float, float, str | None, int | None]] = []
+                is_bookmark = bool(group.get("is_bookmark"))
+                if is_bookmark:
+                    bookmark_number += 1
+                    first_page = next(iter(page_parts))
+                    page_slot = part_slots[first_page]
+                    page_count = page_counts[first_page]
+                    title_progress = (first_page - 1 + page_slot / page_count) / len(sections_to_generate)
+                    parts.append(
+                        (
+                            f"Chapter {bookmark_number}: {group['title']}",
+                            title_progress,
+                            0.0,
+                            f"Generating page {first_page} of {len(sections_to_generate)}",
+                            None,
+                        )
+                    )
+                for page_index, texts in page_parts.items():
+                    slot = part_slots[page_index]
+                    slots = page_counts[page_index]
+                    part_slots[page_index] += 1
+                    parts.append(
+                        (
+                            "\n\n".join(text for text in texts if text.strip()),
+                            (page_index - 1 + slot / slots) / len(sections_to_generate),
+                            1 / (len(sections_to_generate) * slots),
+                            f"Generating page {page_index} of {len(sections_to_generate)}",
+                            1000 if is_bookmark and len(parts) == 1 else 500 if is_bookmark else None,
+                        )
+                    )
+                sample_rate, temporary_wav = _synthesize_parts_to_wav(
                     backend,
                     synthesize_chunk,
-                    section["text"],
+                    parts,
                     reference_audio,
                     settings,
                     progress,
-                    start,
-                    1 / len(sections_to_generate),
+                    end_silence_ms=2000 if is_bookmark else 500 if has_bookmark_chapters else 0,
                 )
-                try:
-                    generated_paths.append(
-                        save_document_audio(document_id, section_id, temporary_wav, sample_rate)
-                    )
-                except Exception:
-                    temporary_wav.unlink(missing_ok=True)
-                    raise
+                generated_paths.append((temporary_wav, group["title"]))
             if not ffmpeg_path or not ffprobe_path:
                 raise VoxBenchError("FFmpeg and FFprobe are required to create an audiobook.")
             progress(1.0, "Assembling audiobook chapters")
-            batch = [create_batch_item(str(path), ffprobe_path) for path in generated_paths]
+            batch = []
+            for index, (path, title) in enumerate(generated_paths, start=1):
+                batch.append(
+                    create_batch_item(
+                        str(path),
+                        ffprobe_path,
+                        title or f"Chapter {index}",
+                    )
+                )
             output = assemble_chapters(
                 batch,
                 "Silence",
-                500,
+                0 if has_bookmark_chapters else 500,
                 0.0,
                 False,
                 output_format,
@@ -263,7 +362,7 @@ def _create_audiobook(
             )
             return AudiobookResult(output, document_id, len(sections_to_generate))
         finally:
-            for generated_path in generated_paths:
+            for generated_path, _title in generated_paths:
                 try:
                     generated_path.unlink(missing_ok=True)
                 except OSError:
@@ -330,6 +429,9 @@ def create_audiobook(
     output_directory: str,
     document_id: str | None = None,
     section_ids: list[str] | None = None,
+    use_pdf_bookmarks: bool = True,
+    pdf_bookmark_depth: int = 1,
+    skip_pdf_table_of_contents: bool = True,
     output_format: str = ".m4b",
     progress: ProgressCallback = lambda _value, _message: None,
 ) -> AudiobookResult:
@@ -346,6 +448,9 @@ def create_audiobook(
             output_directory=output_directory,
             document_id=document_id,
             section_ids=section_ids,
+            use_pdf_bookmarks=use_pdf_bookmarks,
+            pdf_bookmark_depth=pdf_bookmark_depth,
+            skip_pdf_table_of_contents=skip_pdf_table_of_contents,
             output_format=output_format,
             progress=progress,
             synthesize_chunk=synthesize_chunk,
