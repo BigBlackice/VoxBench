@@ -4,7 +4,7 @@ from pathlib import Path
 
 from docx import Document
 
-from webui.docx_reader import DocxError, read_docx_sections
+from app_logic.docx_reader import DocxError, read_docx_sections
 
 
 class DocxReaderTests(unittest.TestCase):

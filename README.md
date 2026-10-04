@@ -97,10 +97,10 @@ adapter for its exact request and response format.
 Place and commit one bundled default voice sample in `sample/` to use it whenever
 the user does not upload a reference clip.
 
-An uploaded reference clip is stored in the local `reference_audio/` workspace
-and used until it is removed or replaced by another upload. VoxBench keeps only
-that one active upload; the workspace is excluded from Git because it may
-contain private voice data.
+Uploaded reference clips are limited to 10 MB. VoxBench keeps only one active
+upload per browser session, replaces it when another clip is uploaded, and
+removes it when that session ends. The transient `reference_audio/` workspace
+is excluded from Git because it may contain private voice data.
 
 ## Generated output
 
@@ -156,20 +156,20 @@ Copy `.env.example` to `.env`; the real `.env` is excluded from Git.
 Generate a password hash without storing the plain-text password:
 
 ```bat
-.venv\Scripts\python.exe -m webui.auth hash-password
+.venv\Scripts\python.exe -m app_logic.auth hash-password
 ```
 
 On Linux or macOS:
 
 ```sh
-.venv/bin/python -m webui.auth hash-password
+.venv/bin/python -m app_logic.auth hash-password
 ```
 
 Paste the result into `VOXBENCH_PASSWORD_HASH`. Generate the independent
 session-signing secret with:
 
 ```bat
-.venv\Scripts\python.exe -m webui.auth generate-secret
+.venv\Scripts\python.exe -m app_logic.auth generate-secret
 ```
 
 Then configure `.env`:

@@ -13,9 +13,9 @@ import soundfile as sf
 from bs4 import BeautifulSoup
 
 from webui.config import OUTPUTS_DIR, PROJECT_DIR
-from webui.docx_reader import DocxError, read_docx_sections
-from webui.epub_reader import EpubError, read_epub_spine
-from webui.pdf_reader import PdfError, read_pdf_pages
+from app_logic.docx_reader import DocxError, read_docx_sections
+from app_logic.epub_reader import EpubError, read_epub_spine
+from app_logic.pdf_reader import PdfError, read_pdf_pages
 
 
 DOCUMENTS_DIR = PROJECT_DIR / "documents"
@@ -206,13 +206,14 @@ def _extract_epub(source: Path) -> list[dict[str, Any]]:
     return sections
 
 
-def import_document(file_path: str) -> str:
+def import_document(file_path: str, source_name: str | None = None) -> str:
     source = Path(file_path).resolve()
     if not source.is_file() or source.suffix.lower() not in SUPPORTED_DOCUMENT_EXTENSIONS:
         raise VoxBenchError("Upload a PDF, EPUB, or DOCX file.")
+    display_name = Path(source_name or source.name).name
 
     DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
-    base = _safe_name(source.stem)
+    base = _safe_name(Path(display_name).stem)
     document_id = f"{datetime.now():%Y%m%d_%H%M%S}_{base}"
     counter = 2
     while (_project_path(document_id)).exists():
@@ -238,8 +239,8 @@ def import_document(file_path: str) -> str:
         save_manifest(
             {
                 "id": document_id,
-                "title": source.stem,
-                "source_name": source.name,
+                "title": Path(display_name).stem,
+                "source_name": display_name,
                 "source_path": str(stored_source),
                 "source_type": source.suffix.lower(),
                 "created_at": datetime.now().isoformat(timespec="seconds"),

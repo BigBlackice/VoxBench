@@ -3,7 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from webui.app_config import ModelConnectionSettings, load_model_connection, save_model_connection
+from webui.app_config import (
+    SECRET_FIELD_MASK,
+    ModelConnectionSettings,
+    load_model_connection,
+    masked_secret,
+    save_model_connection,
+    updated_secret,
+)
 from webui.errors import VoxBenchError
 
 
@@ -32,6 +39,11 @@ class AppConfigTests(unittest.TestCase):
     def test_provider_requires_endpoint(self):
         with self.assertRaises(VoxBenchError):
             ModelConnectionSettings(connection_type="provider").validate()
+
+    def test_secret_field_mask_never_contains_the_saved_secret(self):
+        self.assertEqual(masked_secret("secret-value"), SECRET_FIELD_MASK)
+        self.assertEqual(updated_secret("", "secret-value"), "secret-value")
+        self.assertEqual(updated_secret("replacement", "secret-value"), "replacement")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ inference backend is only asked to turn one prepared text chunk into audio.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +15,20 @@ from nicegui import run, ui
 from application.audiobook import SynthesisSettings, create_audiobook
 from application.uploads import discard_upload, store_upload
 from inference import InferenceError
-from webui.config import AUDIO_FILE_EXTENSIONS, FFMPEG_DOWNLOAD_URL, OUTPUTS_DIR, REFERENCE_AUDIO_DIR
-from webui.app_config import ModelConnection, ModelConnectionSettings
-from webui.document_workspace import (
+from webui.config import (
+    AUDIO_FILE_EXTENSIONS,
+    FFMPEG_DOWNLOAD_URL,
+    MAX_REFERENCE_AUDIO_BYTES,
+    OUTPUTS_DIR,
+    REFERENCE_AUDIO_DIR,
+)
+from webui.app_config import (
+    ModelConnection,
+    ModelConnectionSettings,
+    masked_secret,
+    updated_secret,
+)
+from app_logic.workspace import (
     SUPPORTED_DOCUMENT_EXTENSIONS,
     apply_cleanup_to_sections,
     clear_document_projects,
@@ -31,10 +43,9 @@ from webui.document_workspace import (
     set_empty_sections_ignored,
 )
 from webui.errors import VoxBenchError
-from webui.storage import (
+from app_logic.storage import (
     clear_uploaded_reference_audio,
     default_reference_sample,
-    list_reference_samples,
     replace_uploaded_reference_audio,
 )
 
@@ -72,10 +83,10 @@ def build_interface(
     stored_documents = list_documents()
     stored_manifest = load_manifest(stored_documents[0][1]) if stored_documents else None
     bundled_reference = default_reference_sample()
-    uploaded_references = list_reference_samples(REFERENCE_AUDIO_DIR)
+    reference_workspace = REFERENCE_AUDIO_DIR / uuid.uuid4().hex
     state: dict[str, Any] = {
         "document_id": stored_manifest["id"] if stored_manifest else None,
-        "reference_audio": uploaded_references[0][1] if uploaded_references else None,
+        "reference_audio": None,
         "default_reference_audio": str(bundled_reference) if bundled_reference else None,
         "busy": False,
         "progress": "Ready.",
@@ -86,6 +97,14 @@ def build_interface(
         "editor_section_id": None,
         "editor_section_title": "",
     }
+
+    def cleanup_reference_workspace() -> None:
+        try:
+            clear_uploaded_reference_audio(reference_workspace)
+        except OSError:
+            pass
+
+    ui.context.client.on_disconnect(cleanup_reference_workspace)
     stored_document_size = 0
     if stored_manifest:
         try:
@@ -100,7 +119,7 @@ def build_interface(
                 ui.image("/static/favicon.png").classes("w-11 h-11 rounded-lg")
                 with ui.column().classes("gap-0"):
                     ui.label("VoxBench").classes("vox-page-title text-3xl font-bold")
-                    ui.label("Create clear speech and complete audiobooks from one place.").classes(
+                    ui.label("Create text to speech and complete audiobooks.").classes(
                         "vox-muted"
                     )
             with ui.row().classes("items-center"):
@@ -114,13 +133,13 @@ def build_interface(
                     "vox-muted"
                 )
 
-        status = ui.label("Ready.").classes("vox-muted")
+        status = ui.label("").classes("vox-muted")
         progress_bar = ui.linear_progress(value=0).classes("w-full")
         output_area = ui.column().classes("w-full")
 
         with ui.tabs().classes("w-full") as tabs:
             document_tab = ui.tab("Document", icon="description")
-            text_tab = ui.tab("Paste text", icon="text_fields")
+            text_tab = ui.tab("Text", icon="text_fields")
         with ui.tab_panels(tabs, value=document_tab).classes("w-full"):
             with ui.tab_panel(document_tab):
                 with ui.card().classes("vox-card w-full p-5"):
@@ -149,12 +168,16 @@ def build_interface(
                             await run.io_bound(clear_document_projects)
                             state["document_id"] = None
                             state["ignore_empty_pages"] = False
-                            document_id = await run.io_bound(import_document, str(uploaded))
+                            document_id = await run.io_bound(
+                                import_document,
+                                str(uploaded),
+                                event.name,
+                            )
                             state["document_id"] = document_id
                             manifest = await run.io_bound(load_manifest, document_id)
                             document_file_label.set_text(
                                 f"{manifest['source_name']} ({_format_file_size(len(data))}) - "
-                                f"{len(manifest['sections'])} sections ready."
+                                f"{len(manifest['sections'])} Pages."
                             )
                             document_check.visible = True
                             document_remove.visible = True
@@ -221,7 +244,7 @@ def build_interface(
             def default_reference_label() -> str:
                 default_reference = state["default_reference_audio"]
                 if default_reference:
-                    return f"Using bundled default: {Path(default_reference).name}"
+                    return f"Using default voice"
                 return "No reference audio selected."
 
             def reference_label() -> str:
@@ -233,7 +256,7 @@ def build_interface(
             async def remove_reference() -> None:
                 if state["reference_audio"]:
                     try:
-                        await run.io_bound(clear_uploaded_reference_audio)
+                        await run.io_bound(clear_uploaded_reference_audio, reference_workspace)
                     except (OSError, VoxBenchError) as error:
                         ui.notify(str(error), type="negative")
                         return
@@ -249,8 +272,14 @@ def build_interface(
                 uploaded: Path | None = None
                 try:
                     data = event.content.read()
+                    if len(data) > MAX_REFERENCE_AUDIO_BYTES:
+                        raise VoxBenchError("Reference audio must be 10 MB or smaller.")
                     uploaded = store_upload(event.name, data, AUDIO_FILE_EXTENSIONS)
-                    sample = await run.io_bound(replace_uploaded_reference_audio, str(uploaded))
+                    sample = await run.io_bound(
+                        replace_uploaded_reference_audio,
+                        str(uploaded),
+                        reference_workspace,
+                    )
                     state["reference_audio"] = str(sample) if sample else None
                     reference_file_label.set_text(
                         f"{sample.name} ({_format_file_size(len(data))})"
@@ -272,8 +301,12 @@ def build_interface(
                 reference_upload = ui.upload(
                     on_upload=receive_reference,
                     on_begin_upload=lambda _: _begin_reference_upload(),
+                    on_rejected=lambda _: ui.notify(
+                        "Reference audio must be 10 MB or smaller.", type="warning"
+                    ),
                     auto_upload=True,
                     max_files=1,
+                    max_file_size=MAX_REFERENCE_AUDIO_BYTES,
                     label="",
                 ).props("accept=.wav,.mp3,.m4a,.ogg,.flac,.webm flat hide-upload-btn").classes(
                     "vox-upload w-full"
@@ -447,10 +480,9 @@ def build_interface(
                 ).classes("w-full")
                 service_api_key = ui.input(
                     "Model service API key (optional)",
-                    value=model_connection.settings.service_api_key,
+                    placeholder=masked_secret(model_connection.settings.service_api_key),
                     password=True,
-                    password_toggle_button=True,
-                ).classes("w-full")
+                ).classes("vox-secret-input w-full")
             with ui.column().classes("w-full gap-3") as provider_fields:
                 ui.label("Use this only for a provider compatible with VoxBench's generic JSON adapter.").classes(
                     "vox-muted"
@@ -463,10 +495,10 @@ def build_interface(
                         "Provider model", value=model_connection.settings.provider_model
                     ).classes("flex-1")
                 provider_api_key = ui.input(
-                    "Provider API key", value=model_connection.settings.provider_api_key,
+                    "Provider API key",
+                    placeholder=masked_secret(model_connection.settings.provider_api_key),
                     password=True,
-                    password_toggle_button=True,
-                ).classes("w-full")
+                ).classes("vox-secret-input w-full")
             timeout_seconds = ui.number(
                 "Request timeout (seconds)",
                 value=model_connection.settings.timeout_seconds,
@@ -484,20 +516,33 @@ def build_interface(
 
             def save_connection() -> None:
                 try:
-                    model_connection.update(
-                        ModelConnectionSettings(
+                    settings = ModelConnectionSettings(
                             connection_type=connection_type.value,
                             service_url=service_url.value.strip(),
-                            service_api_key=service_api_key.value,
+                            service_api_key=updated_secret(
+                                service_api_key.value,
+                                model_connection.settings.service_api_key,
+                            ),
                             timeout_seconds=float(timeout_seconds.value),
                             provider_url=provider_url.value.strip(),
-                            provider_api_key=provider_api_key.value,
+                            provider_api_key=updated_secret(
+                                provider_api_key.value,
+                                model_connection.settings.provider_api_key,
+                            ),
                             provider_model=provider_model.value.strip(),
                         )
-                    )
+                    model_connection.update(settings)
                 except (RuntimeError, ValueError, VoxBenchError) as error:
                     ui.notify(str(error), type="negative")
                     return
+                service_api_key.set_value("")
+                provider_api_key.set_value("")
+                service_api_key.props(
+                    f"placeholder={masked_secret(settings.service_api_key)}"
+                )
+                provider_api_key.props(
+                    f"placeholder={masked_secret(settings.provider_api_key)}"
+                )
                 ui.notify("Model connection saved.", type="positive")
 
             _button("Save model connection", save_connection, icon="save").classes("w-full")

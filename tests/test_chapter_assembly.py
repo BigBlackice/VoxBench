@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from webui.chapter_assembly import (
+from app_logic.chapter_assembly import (
     assemble_chapters,
     chapter_timeline,
     create_batch_item,
@@ -92,9 +92,9 @@ class ChapterAssemblyTests(unittest.TestCase):
                 stderr=b"",
             )
             with (
-                patch("webui.chapter_assembly.sys.platform", "win32"),
+                patch("app_logic.chapter_assembly.sys.platform", "win32"),
                 patch(
-                    "webui.chapter_assembly.run_command",
+                    "app_logic.chapter_assembly.run_command",
                     return_value=completed,
                 ) as command,
             ):
@@ -124,7 +124,7 @@ class ChapterAssemblyTests(unittest.TestCase):
             )
 
             with patch(
-                "webui.chapter_assembly.run_command",
+                "app_logic.chapter_assembly.run_command",
                 return_value=completed,
             ) as run:
                 assemble_chapters(

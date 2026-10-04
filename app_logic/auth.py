@@ -120,7 +120,7 @@ def load_auth_settings(env_path: Path | None = None) -> AuthSettings:
         if not valid_password_hash(password_hash):
             raise RuntimeError(
                 "VOXBENCH_PASSWORD_HASH is missing or invalid. Generate it "
-                "with: python -m webui.auth hash-password"
+                "with: python -m app_logic.auth hash-password"
             )
         if len(session_secret) < 32:
             raise RuntimeError(

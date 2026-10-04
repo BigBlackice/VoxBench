@@ -1,7 +1,7 @@
 import threading
 import unittest
 
-from webui.generation_control import GenerationController
+from app_logic.generation_control import GenerationController
 
 
 class GenerationControllerTests(unittest.TestCase):

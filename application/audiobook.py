@@ -6,9 +6,9 @@ from typing import Callable, Iterator
 import numpy as np
 
 from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
-from webui.audio_processing import join_audio_chunks
-from webui.chapter_assembly import assemble_chapters, create_batch_item
-from webui.document_workspace import (
+from app_logic.audio_processing import join_audio_chunks
+from app_logic.chapter_assembly import assemble_chapters, create_batch_item
+from app_logic.workspace import (
     clear_document_audio_paths,
     import_document,
     load_manifest,
@@ -17,8 +17,8 @@ from webui.document_workspace import (
     save_document_audio,
 )
 from webui.errors import VoxBenchError
-from webui.storage import save_generated_audio
-from webui.text_processing import split_text
+from app_logic.storage import save_generated_audio
+from app_logic.text_processing import split_text
 
 
 ProgressCallback = Callable[[float, str], None]

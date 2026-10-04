@@ -1,6 +1,6 @@
 import unittest
 
-from webui.text_processing import split_text
+from app_logic.text_processing import split_text
 
 
 class TextSplittingTests(unittest.TestCase):

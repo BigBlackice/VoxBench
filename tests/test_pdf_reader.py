@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from tests.pdf_fixture import write_blank_pdf
-from webui.pdf_reader import PdfError, normalize_pdf_text, read_pdf_pages
+from app_logic.pdf_reader import PdfError, normalize_pdf_text, read_pdf_pages
 
 
 class PdfReaderTests(unittest.TestCase):

@@ -13,6 +13,7 @@ from webui.errors import VoxBenchError
 
 CONFIG_PATH = PROJECT_DIR / "voxbench.json"
 CONNECTION_TYPES = ("service", "provider")
+SECRET_FIELD_MASK = "••••••••"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,17 @@ class ModelConnectionSettings:
         if self.connection_type == "provider" and not self.provider_url.strip():
             raise VoxBenchError("Enter a provider API URL.")
         return self
+
+
+def masked_secret(value: str) -> str:
+    """Return a UI-safe marker without sending a configured secret to the client."""
+    return SECRET_FIELD_MASK if value else ""
+
+
+def updated_secret(value: str | None, existing: str) -> str:
+    """Keep a stored secret unless the settings form receives a new value."""
+    value = value or ""
+    return value or existing
 
 
 def load_model_connection(path: Path = CONFIG_PATH) -> ModelConnectionSettings:

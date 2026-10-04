@@ -6,12 +6,12 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
+from app_logic.text_files import load_text_file
 from webui.errors import VoxBenchError
 import soundfile as sf
 
 from webui.config import (
     AUDIO_FILE_EXTENSIONS,
-    MAX_TEXT_FILE_BYTES,
     OUTPUT_FORMATS,
     OUTPUTS_DIR,
     PROJECT_DIR,
@@ -29,32 +29,6 @@ WINDOWS_RESERVED_NAMES = {
     *(f"COM{number}" for number in range(1, 10)),
     *(f"LPT{number}" for number in range(1, 10)),
 }
-
-
-def load_text_file(file_path: str | None) -> str:
-    """Read a dropped text file and return its contents for the prompt textbox."""
-    if not file_path:
-        return ""
-
-    path = Path(file_path)
-    if path.suffix.lower() not in TEXT_FILE_EXTENSIONS:
-        raise VoxBenchError("Please upload a .txt, .text, or .md file.")
-
-    data = path.read_bytes()
-    if len(data) > MAX_TEXT_FILE_BYTES:
-        raise VoxBenchError("Text files must be 5 MB or smaller.")
-
-    encodings = ["utf-8-sig"]
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        encodings.append("utf-16")
-    encodings.append("cp1252")
-
-    for encoding in encodings:
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    raise VoxBenchError("The text file encoding could not be recognized.")
 
 
 def route_uploaded_file(
@@ -146,7 +120,7 @@ def save_reference_sample(
 def clear_uploaded_reference_audio(
     reference_audio_dir: Path = REFERENCE_AUDIO_DIR,
 ) -> None:
-    """Remove the transient user-uploaded reference-audio workspace."""
+    """Remove one transient user-uploaded reference-audio workspace."""
     directory = reference_audio_dir.resolve()
     if not directory.exists():
         return

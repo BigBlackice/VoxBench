@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from nicegui import app, ui
 from starlette.middleware.sessions import SessionMiddleware
 
-from webui.auth import (
+from app_logic.auth import (
     SharedAuthMiddleware,
     authenticate_login,
     load_auth_settings,
@@ -20,9 +20,10 @@ from webui.auth import (
 )
 from webui.config import MODEL_CACHE_DIR, OUTPUTS_DIR, PROJECT_DIR
 from webui.app_config import ModelConnection, ModelConnectionSettings
-from webui.document_workspace import document_source_path
+from app_logic.workspace import document_source_path
 from webui.errors import VoxBenchError
 from webui.nicegui_interface import build_interface
+from app_logic.storage import clear_uploaded_reference_audio
 from webui.themes import themed_styles
 
 
@@ -79,16 +80,14 @@ def serve_document_source(document_id: str) -> FileResponse:
 
 
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+clear_uploaded_reference_audio()
 app.add_static_files("/outputs", OUTPUTS_DIR, max_cache_age=0)
 app.add_static_files("/static", PROJECT_DIR / "webui" / "static")
 
 
 @ui.page("/")
 def index() -> None:
-    ui.add_head_html(
-        f'<link rel="icon" type="image/png" href="/static/favicon.png">'
-        f"<style>{themed_styles()}</style>"
-    )
+    ui.add_head_html(f"<style>{themed_styles()}</style>")
     ui.dark_mode().enable()
     build_interface(
         model_connection=MODEL_CONNECTION,
@@ -102,6 +101,7 @@ def main() -> None:
         host=AUTH_SETTINGS.host,
         port=AUTH_SETTINGS.port,
         title="VoxBench",
+        favicon=PROJECT_DIR / "webui" / "static" / "favicon.png",
         show=False,
         reload=False,
     )

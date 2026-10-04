@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from webui.storage import (
+from app_logic.storage import (
     clear_uploaded_reference_audio,
     default_reference_sample,
     generated_audio_filename,

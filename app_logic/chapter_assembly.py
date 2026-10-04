@@ -10,7 +10,7 @@ from typing import Any
 from webui.errors import VoxBenchError
 
 from webui.config import AUDIO_FILE_EXTENSIONS, OUTPUTS_DIR, PROJECT_DIR
-from webui.storage import resolve_output_directory
+from app_logic.storage import resolve_output_directory
 
 
 ASSEMBLY_FORMATS = (".m4b", ".mp3", ".wav", ".m4a", ".ogg", ".webm")

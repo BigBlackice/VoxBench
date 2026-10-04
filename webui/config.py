@@ -22,5 +22,6 @@ EVENT_TAGS = [
 TEXT_FILE_EXTENSIONS = {".txt", ".text", ".md"}
 MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024
 AUDIO_FILE_EXTENSIONS = {".flac", ".m4a", ".mp3", ".ogg", ".wav", ".webm"}
+MAX_REFERENCE_AUDIO_BYTES = 10 * 1024 * 1024
 OUTPUT_FORMATS = (".wav", ".mp3", ".m4a", ".ogg", ".webm")
 FFMPEG_DOWNLOAD_URL = "https://ffmpeg.org/download.html"

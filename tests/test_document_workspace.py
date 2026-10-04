@@ -8,7 +8,8 @@ import numpy as np
 from docx import Document
 
 from tests.pdf_fixture import write_blank_pdf
-from webui import document_workspace
+from app_logic import workspace as document_workspace
+from webui.errors import VoxBenchError
 
 
 def write_epub(path: Path) -> None:
@@ -59,6 +60,12 @@ def write_epub(path: Path) -> None:
 
 
 class DocumentWorkspaceTests(unittest.TestCase):
+    def test_document_source_rejects_project_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(document_workspace, "DOCUMENTS_DIR", Path(directory) / "documents"):
+                with self.assertRaises(VoxBenchError):
+                    document_workspace.document_source_path("../../voxbench.json")
+
     def test_selects_an_inclusive_pdf_page_range(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -235,9 +242,12 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 "DOCUMENTS_DIR",
                 root / "documents",
             ):
-                document_id = document_workspace.import_document(str(source))
+                document_id = document_workspace.import_document(
+                    str(source), source_name="Original Book.pdf"
+                )
                 manifest = document_workspace.load_manifest(document_id)
                 self.assertEqual(manifest["source_type"], ".pdf")
+                self.assertEqual(manifest["source_name"], "Original Book.pdf")
                 self.assertEqual(len(manifest["sections"]), 2)
                 first = document_workspace.load_section(
                     document_id,

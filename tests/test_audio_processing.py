@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from webui.audio_processing import join_audio_chunks
+from app_logic.audio_processing import join_audio_chunks
 
 
 class AudioJoiningTests(unittest.TestCase):

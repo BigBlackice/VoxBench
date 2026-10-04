@@ -53,6 +53,7 @@ body, .q-page, .q-layout, .q-dialog__backdrop {{ background: var(--voxbench-them
 .q-field--outlined .q-field__control:after {{ border-color: var(--voxbench-theme-outline) !important; }}
 .q-field--focused .q-field__control:after {{ border-color: var(--voxbench-theme-accent) !important; }}
 .q-field__control, .q-field__control-container {{ background: transparent !important; }}
+.vox-secret-input .q-field__native {{ color: var(--voxbench-theme-outline) !important; }}
 .vox-card {{ background: color-mix(in srgb, var(--voxbench-theme-background), var(--voxbench-theme-text) var(--voxbench-theme-surface-mix)); border: 1px solid var(--voxbench-theme-outline); border-radius: 10px; }}
 .vox-page-title, .vox-primary-heading {{ color: var(--voxbench-theme-accent) !important; }}
 .vox-button {{ background: transparent !important; border: 1px solid var(--voxbench-theme-outline) !important; color: var(--voxbench-theme-accent) !important; border-radius: 6px; }}

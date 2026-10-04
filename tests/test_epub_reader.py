@@ -3,7 +3,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from webui.epub_reader import EpubError, read_epub_spine
+from app_logic.epub_reader import EpubError, read_epub_spine
 
 
 CONTAINER = """<?xml version="1.0"?>
