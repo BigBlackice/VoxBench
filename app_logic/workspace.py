@@ -655,8 +655,18 @@ def save_document_audio(
     target = output_dir / (
         f"{document_prefix}_{order:04d}_{_safe_name(section['title'])}.wav"
     )
-    audio_data = audio.detach().cpu().float().numpy() if hasattr(audio, "detach") else audio
-    sf.write(target, audio_data, sample_rate, format="WAV", subtype="PCM_16")
+    if isinstance(audio, (str, Path)):
+        source = Path(audio)
+        if not source.is_file():
+            raise VoxBenchError("Generated section audio could not be found.")
+        try:
+            source.replace(target)
+        except OSError:
+            target.unlink(missing_ok=True)
+            shutil.move(str(source), str(target))
+    else:
+        audio_data = audio.detach().cpu().float().numpy() if hasattr(audio, "detach") else audio
+        sf.write(target, audio_data, sample_rate, format="WAV", subtype="PCM_16")
     section["audio_path"] = str(target.resolve())
     section["status"] = "Generated"
     save_section(document_id, section)

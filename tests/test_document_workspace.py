@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import soundfile as sf
 from docx import Document
 
 from tests.pdf_fixture import write_blank_pdf
@@ -424,6 +425,38 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 self.assertIsNone(
                     document_workspace.load_section(document_id, section["id"])["audio_path"]
                 )
+
+    def test_existing_document_audio_is_moved_into_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            documents = root / "documents"
+            outputs = root / "outputs"
+            with (
+                patch.object(document_workspace, "DOCUMENTS_DIR", documents),
+                patch.object(document_workspace, "OUTPUTS_DIR", outputs),
+            ):
+                document_id = "20260101_120000_test"
+                (documents / document_id).mkdir(parents=True)
+                section = document_workspace._new_section("Opening", "Hello")
+                document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "title": "Test book",
+                        "source_name": "test.epub",
+                        "source_path": str(documents / document_id / "source.epub"),
+                        "source_type": ".epub",
+                        "created_at": "2026-01-01T12:00:00",
+                        "sections": [section["id"]],
+                    }
+                )
+                source = root / "section.wav"
+                sf.write(source, np.zeros(2400, dtype=np.float32), 24000)
+                target = document_workspace.save_document_audio(
+                    document_id, section["id"], source, 24000
+                )
+                self.assertTrue(target.is_file())
+                self.assertFalse(source.exists())
 
     def test_clearing_documents_preserves_generated_outputs(self):
         with tempfile.TemporaryDirectory() as directory:

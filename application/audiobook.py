@@ -1,9 +1,11 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Callable, Iterator
 
 import numpy as np
+import soundfile as sf
 
 from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
 from app_logic.audio_processing import join_audio_chunks
@@ -59,8 +61,7 @@ def _reference_synthesizer(
     yield backend.synthesize
 
 
-def _synthesize_text(
-    backend: InferenceBackend,
+def _synthesize_chunks(
     synthesize_chunk: Callable[[SynthesisRequest], AudioResult],
     text: str,
     reference_audio: str | None,
@@ -68,12 +69,12 @@ def _synthesize_text(
     progress: ProgressCallback,
     progress_start: float,
     progress_span: float,
-) -> tuple[int, np.ndarray]:
+) -> Iterator[tuple[int, np.ndarray, bool]]:
+    """Yield validated generated chunks without retaining completed audio."""
     chunks = split_text(text, settings.max_chunk_chars)
     if not chunks:
         raise VoxBenchError("There is no text to synthesize.")
-    audio_chunks: list[np.ndarray] = []
-    sample_rate = backend.sample_rate
+    sample_rate: int | None = None
     for index, chunk in enumerate(chunks, start=1):
         progress(
             progress_start + progress_span * (index - 1) / len(chunks),
@@ -92,12 +93,93 @@ def _synthesize_text(
                 norm_loudness=settings.norm_loudness,
             )
         )
-        if audio_chunks and result.sample_rate != sample_rate:
+        if sample_rate is not None and result.sample_rate != sample_rate:
             raise VoxBenchError("The inference sample rate changed between chunks.")
         sample_rate = result.sample_rate
-        audio_chunks.append(result.samples)
+        samples = np.asarray(result.samples, dtype=np.float32)
+        del result
+        yield sample_rate, samples, index > 1
+
+
+def _synthesize_text(
+    backend: InferenceBackend,
+    synthesize_chunk: Callable[[SynthesisRequest], AudioResult],
+    text: str,
+    reference_audio: str | None,
+    settings: SynthesisSettings,
+    progress: ProgressCallback,
+    progress_start: float,
+    progress_span: float,
+) -> tuple[int, np.ndarray]:
+    audio_chunks: list[np.ndarray] = []
+    sample_rate = backend.sample_rate
+    for sample_rate, samples, _has_previous in _synthesize_chunks(
+        synthesize_chunk,
+        text,
+        reference_audio,
+        settings,
+        progress,
+        progress_start,
+        progress_span,
+    ):
+        audio_chunks.append(samples)
     progress(progress_start + progress_span, "Joining generated audio")
     return sample_rate, join_audio_chunks(audio_chunks, sample_rate, settings.pause_ms)
+
+
+def _synthesize_text_to_wav(
+    backend: InferenceBackend,
+    synthesize_chunk: Callable[[SynthesisRequest], AudioResult],
+    text: str,
+    reference_audio: str | None,
+    settings: SynthesisSettings,
+    progress: ProgressCallback,
+    progress_start: float,
+    progress_span: float,
+) -> tuple[int, Path]:
+    """Stream one document section to WAV without retaining its chunks in RAM."""
+    with NamedTemporaryFile(prefix="voxbench_section_", suffix=".wav", delete=False) as temporary:
+        target = Path(temporary.name)
+    sample_rate = backend.sample_rate
+    writer: sf.SoundFile | None = None
+    silence: np.ndarray | None = None
+    try:
+        for sample_rate, samples, has_previous in _synthesize_chunks(
+            synthesize_chunk,
+            text,
+            reference_audio,
+            settings,
+            progress,
+            progress_start,
+            progress_span,
+        ):
+            if writer is None:
+                writer = sf.SoundFile(
+                    target,
+                    mode="w",
+                    samplerate=sample_rate,
+                    channels=1,
+                    format="WAV",
+                    subtype="PCM_16",
+                )
+                silence = np.zeros(
+                    round(sample_rate * settings.pause_ms / 1000.0),
+                    dtype=np.float32,
+                )
+            elif has_previous and silence is not None and silence.size:
+                writer.write(silence)
+            writer.write(samples)
+        progress(progress_start + progress_span, "Writing generated audio")
+        return sample_rate, target
+    except Exception:
+        if writer is not None:
+            writer.close()
+            writer = None
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        if writer is not None:
+            writer.close()
 
 
 def _create_audiobook(
@@ -144,25 +226,29 @@ def _create_audiobook(
         if not sections_to_generate:
             raise VoxBenchError("The document contains no readable text.")
         generated_paths: list[Path] = []
-        for section_index, section_id in enumerate(sections_to_generate, start=1):
-            section = load_section(document_id, section_id)
-            start = (section_index - 1) / len(sections_to_generate)
-            sample_rate, audio = _synthesize_text(
-                backend,
-                synthesize_chunk,
-                section["text"],
-                reference_audio,
-                settings,
-                progress,
-                start,
-                1 / len(sections_to_generate),
-            )
-            generated_paths.append(
-                save_document_audio(document_id, section_id, audio, sample_rate)
-            )
-        if not ffmpeg_path or not ffprobe_path:
-            raise VoxBenchError("FFmpeg and FFprobe are required to create an audiobook.")
         try:
+            for section_index, section_id in enumerate(sections_to_generate, start=1):
+                section = load_section(document_id, section_id)
+                start = (section_index - 1) / len(sections_to_generate)
+                sample_rate, temporary_wav = _synthesize_text_to_wav(
+                    backend,
+                    synthesize_chunk,
+                    section["text"],
+                    reference_audio,
+                    settings,
+                    progress,
+                    start,
+                    1 / len(sections_to_generate),
+                )
+                try:
+                    generated_paths.append(
+                        save_document_audio(document_id, section_id, temporary_wav, sample_rate)
+                    )
+                except Exception:
+                    temporary_wav.unlink(missing_ok=True)
+                    raise
+            if not ffmpeg_path or not ffprobe_path:
+                raise VoxBenchError("FFmpeg and FFprobe are required to create an audiobook.")
             progress(1.0, "Assembling audiobook chapters")
             batch = [create_batch_item(str(path), ffprobe_path) for path in generated_paths]
             output = assemble_chapters(
