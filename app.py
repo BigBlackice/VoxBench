@@ -4,6 +4,7 @@ The app process owns uploads, documents, audio files, and FFmpeg.  It connects
 to the model service through the framework-independent inference interface.
 """
 
+import asyncio
 import os
 import shutil
 
@@ -97,6 +98,10 @@ def index() -> None:
 
 
 def main() -> None:
+    loop = "auto"
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        loop = "none"
     ui.run(
         host=AUTH_SETTINGS.host,
         port=AUTH_SETTINGS.port,
@@ -104,6 +109,7 @@ def main() -> None:
         favicon=PROJECT_DIR / "webui" / "static" / "favicon.png",
         show=False,
         reload=False,
+        loop=loop,
     )
 
 

@@ -8,6 +8,7 @@ import soundfile as sf
 
 from application import audiobook
 from application.audiobook import SynthesisSettings, _synthesize_parts_to_wav, _synthesize_text_to_wav, create_audiobook
+from app_logic.generation_control import GenerationController
 from inference.contract import AudioResult
 
 
@@ -101,6 +102,35 @@ class AudiobookTests(unittest.TestCase):
             save.assert_called_once()
             in_memory.assert_not_called()
             self.assertFalse(temporary_wav.exists())
+
+    def test_keep_abort_preserves_partial_wav_for_assembly(self):
+        backend = FakeBackend()
+        controller = GenerationController()
+        controller.begin()
+
+        def abort_after_first_chunk(request):
+            controller.abort(True)
+            return backend.synthesize(request)
+
+        with self.assertRaises(audiobook._PartialGenerationCancelled) as raised:
+            _synthesize_text_to_wav(
+                backend,
+                abort_after_first_chunk,
+                "One. Two.",
+                None,
+                SynthesisSettings(max_chunk_chars=300),
+                lambda _value, _message: None,
+                0.0,
+                1.0,
+                controller,
+            )
+        try:
+            samples, sample_rate = sf.read(raised.exception.path, dtype="float32")
+            self.assertEqual(sample_rate, 10)
+            self.assertEqual(len(samples), 2)
+        finally:
+            raised.exception.path.unlink(missing_ok=True)
+            controller.finish()
 
     def test_document_wavs_are_deleted_after_assembly(self):
         backend = FakeBackend()

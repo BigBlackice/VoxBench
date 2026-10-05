@@ -12,8 +12,9 @@ from typing import Any
 
 from nicegui import run, ui
 
-from application.audiobook import SynthesisSettings, create_audiobook
+from application.audiobook import GenerationCancelled, SynthesisSettings, create_audiobook
 from application.uploads import discard_upload, store_upload
+from app_logic.generation_control import GenerationController
 from inference import InferenceError
 from webui.config import (
     AUDIO_FILE_EXTENSIONS,
@@ -93,6 +94,8 @@ def build_interface(
         "reference_name": None,
         "default_reference_audio": str(bundled_reference) if bundled_reference else None,
         "busy": False,
+        "aborting": False,
+        "generation_control": None,
         "progress": "Ready.",
         "settings": SynthesisSettings(),
         "output_format": ".m4b" if ffmpeg_path and ffprobe_path else ".wav",
@@ -147,6 +150,11 @@ def build_interface(
             progress_bar = ui.linear_progress(value=0, size="20px", show_value=False).classes("w-full")
             progress_percent = ui.label("0.0%").classes("absolute-center text-xs text-white")
         output_area = ui.column().classes("w-full")
+        with ui.row().classes("w-full justify-center gap-2"):
+            pause_button = _button("Pause", icon="pause")
+            abort_button = _button("Abort", icon="stop")
+        pause_button.visible = False
+        abort_button.visible = False
 
         with ui.tabs().classes("w-full") as tabs:
             document_tab = ui.tab("Document", icon="description")
@@ -367,10 +375,69 @@ def build_interface(
             output_area.clear()
             with output_area:
                 with ui.card().classes("vox-card w-full p-4"):
-                    ui.label("Audiobook ready").classes("vox-primary-heading text-lg font-medium")
+                    ui.label(
+                        "Incomplete audiobook ready" if result.incomplete else "Audiobook ready"
+                    ).classes("vox-primary-heading text-lg font-medium")
                     ui.label(result.output_path.name).classes("vox-muted")
                     ui.audio(f"/outputs/{result.output_path.name}").classes("w-full")
                     _button("Download", lambda: ui.download(result.output_path))
+
+        def set_generation_controls(active: bool) -> None:
+            pause_button.visible = active
+            abort_button.visible = active
+            pause_button.enable()
+            abort_button.enable()
+            pause_button.text = "Pause"
+            pause_button.icon = "pause"
+
+        def begin_generation() -> GenerationController:
+            controller = GenerationController()
+            controller.begin()
+            state["generation_control"] = controller
+            state["aborting"] = False
+            set_generation_controls(True)
+            return controller
+
+        def end_generation() -> None:
+            controller = state.get("generation_control")
+            if controller:
+                controller.finish()
+            state["generation_control"] = None
+            state["aborting"] = False
+            set_generation_controls(False)
+
+        def toggle_pause() -> None:
+            controller = state.get("generation_control")
+            if not controller:
+                return
+            if controller.is_paused():
+                controller.resume()
+                pause_button.text = "Pause"
+                pause_button.icon = "pause"
+                status.set_text("Resuming generation…")
+            elif controller.pause():
+                pause_button.text = "Resume"
+                pause_button.icon = "play_arrow"
+                status.set_text("Pausing after the current chunk…")
+
+        def abort_generation(keep_partial: bool) -> None:
+            controller = state.get("generation_control")
+            if controller and controller.abort(keep_partial):
+                state["aborting"] = True
+                pause_button.disable()
+                abort_button.disable()
+                progress_percent.set_text("Aborting…")
+                status.set_text("Stopping after the current chunk…")
+            abort_dialog.close()
+
+        with ui.dialog() as abort_dialog, ui.card().classes("vox-card p-5"):
+            ui.label("Do you want to keep the incomplete audio?").classes("vox-primary-heading text-lg")
+            with ui.row().classes("w-full justify-end gap-2"):
+                _button("Yes", lambda: abort_generation(True))
+                _button("No", lambda: abort_generation(False))
+
+        pause_button.on_click(toggle_pause)
+        abort_button.on_click(abort_dialog.open)
 
         async def create() -> None:
             if state["busy"]:
@@ -399,7 +466,9 @@ def build_interface(
                 ui.notify("FFmpeg and FFprobe are required to assemble document chapters.", type="negative")
                 return
             state["busy"] = True
+            controller = begin_generation()
             create_button.disable()
+            create_selected_button.disable()
             progress_bar.value = 0
             progress_percent.set_text("0.0%")
             state["progress"] = (0.0, "Starting")
@@ -425,17 +494,25 @@ def build_interface(
                     pdf_bookmark_depth=state["pdf_bookmark_depth"],
                     skip_pdf_table_of_contents=state["skip_pdf_table_of_contents"],
                     progress=report,
+                    generation_control=controller,
                 )
                 show_output(result)
                 progress_bar.value = 1
                 progress_percent.set_text("100.0%")
-                status.set_text("Finished.")
+                status.set_text("Incomplete audio ready." if result.incomplete else "Finished.")
+                if result.incomplete:
+                    ui.notify("Incomplete audio assembled.", type="warning")
+            except GenerationCancelled:
+                ui.notify("Generation aborted.", type="warning")
+                status.set_text("Generation aborted.")
             except (InferenceError, OSError, VoxBenchError) as error:
                 ui.notify(str(error), type="negative")
                 status.set_text("Generation failed.")
             finally:
                 state["busy"] = False
+                end_generation()
                 create_button.enable()
+                create_selected_button.enable()
 
         create_button = _button("3. Create audiobook", create, icon="auto_awesome").classes(
             "w-full text-lg py-3"
@@ -445,8 +522,11 @@ def build_interface(
             if state["busy"]:
                 value, message = state["progress"]
                 progress_bar.value = value
-                progress_percent.set_text(f"{value * 100:.1f}%")
-                status.set_text(message)
+                if state["aborting"]:
+                    progress_percent.set_text("Aborting…")
+                else:
+                    progress_percent.set_text(f"{value * 100:.1f}%")
+                    status.set_text(message)
 
         ui.timer(0.25, update_progress)
 
@@ -800,6 +880,7 @@ def build_interface(
                     return
                 await save_current_editor()
                 state["busy"] = True
+                controller = begin_generation()
                 create_button.disable()
                 create_selected_button.disable()
                 progress_bar.value = 0
@@ -831,17 +912,27 @@ def build_interface(
                         pdf_bookmark_depth=state["pdf_bookmark_depth"],
                         skip_pdf_table_of_contents=state["skip_pdf_table_of_contents"],
                         progress=report,
+                        generation_control=controller,
                     )
                     show_output(result)
                     progress_bar.value = 1
                     progress_percent.set_text("100.0%")
-                    status.set_text("Finished selected-page generation.")
-                    ui.notify("Selected pages created.", type="positive")
+                    status.set_text(
+                        "Incomplete audio ready." if result.incomplete else "Finished selected-page generation."
+                    )
+                    ui.notify(
+                        "Incomplete audio assembled." if result.incomplete else "Selected pages created.",
+                        type="warning" if result.incomplete else "positive",
+                    )
+                except GenerationCancelled:
+                    ui.notify("Generation aborted.", type="warning")
+                    status.set_text("Selected-page generation aborted.")
                 except (InferenceError, OSError, VoxBenchError) as error:
                     ui.notify(str(error), type="negative")
                     status.set_text("Selected-page generation failed.")
                 finally:
                     state["busy"] = False
+                    end_generation()
                     create_button.enable()
                     create_selected_button.enable()
 

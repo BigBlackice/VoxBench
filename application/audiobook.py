@@ -9,6 +9,7 @@ import numpy as np
 import soundfile as sf
 
 from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
+from app_logic.generation_control import GenerationController
 from app_logic.audio_processing import join_audio_chunks
 from app_logic.chapter_assembly import assemble_chapters, create_batch_item
 from app_logic.workspace import (
@@ -48,6 +49,22 @@ class AudiobookResult:
     output_path: Path
     document_id: str | None
     section_count: int
+    incomplete: bool = False
+
+
+class GenerationCancelled(VoxBenchError):
+    """Raised at a safe chunk boundary when the user aborts generation."""
+
+    def __init__(self, keep_partial: bool) -> None:
+        super().__init__("Generation was aborted.")
+        self.keep_partial = keep_partial
+
+
+class _PartialGenerationCancelled(GenerationCancelled):
+    def __init__(self, path: Path, sample_rate: int) -> None:
+        super().__init__(True)
+        self.path = path
+        self.sample_rate = sample_rate
 
 
 @contextmanager
@@ -73,6 +90,7 @@ def _synthesize_chunks(
     progress_start: float,
     progress_span: float,
     progress_label: str | None = None,
+    generation_control: GenerationController | None = None,
 ) -> Iterator[tuple[int, np.ndarray, bool]]:
     """Yield validated generated chunks without retaining completed audio."""
     chunks = split_text(text, settings.max_chunk_chars)
@@ -80,6 +98,12 @@ def _synthesize_chunks(
         raise VoxBenchError("There is no text to synthesize.")
     sample_rate: int | None = None
     for index, chunk in enumerate(chunks, start=1):
+        if generation_control and generation_control.is_paused():
+            progress(progress_start, "Paused")
+        if generation_control:
+            generation_control.wait_if_paused()
+            if generation_control.is_aborted():
+                raise GenerationCancelled(generation_control.keep_partial())
         progress(
             progress_start + progress_span * (index - 1) / len(chunks),
             progress_label or f"Generating chunk {index} of {len(chunks)}",
@@ -114,6 +138,7 @@ def _synthesize_text(
     progress: ProgressCallback,
     progress_start: float,
     progress_span: float,
+    generation_control: GenerationController | None = None,
 ) -> tuple[int, np.ndarray]:
     audio_chunks: list[np.ndarray] = []
     sample_rate = backend.sample_rate
@@ -125,6 +150,7 @@ def _synthesize_text(
         progress,
         progress_start,
         progress_span,
+        generation_control=generation_control,
     ):
         audio_chunks.append(samples)
     progress(progress_start + progress_span, "Joining generated audio")
@@ -140,6 +166,7 @@ def _synthesize_text_to_wav(
     progress: ProgressCallback,
     progress_start: float,
     progress_span: float,
+    generation_control: GenerationController | None = None,
 ) -> tuple[int, Path]:
     """Stream one text value to WAV without retaining its chunks in RAM."""
     return _synthesize_parts_to_wav(
@@ -149,6 +176,7 @@ def _synthesize_text_to_wav(
         reference_audio,
         settings,
         progress,
+        generation_control=generation_control,
     )
 
 
@@ -160,6 +188,7 @@ def _synthesize_parts_to_wav(
     settings: SynthesisSettings,
     progress: ProgressCallback,
     end_silence_ms: int = 0,
+    generation_control: GenerationController | None = None,
 ) -> tuple[int, Path]:
     """Stream ordered text parts into one WAV without retaining audio chunks."""
     with NamedTemporaryFile(prefix="voxbench_section_", suffix=".wav", delete=False) as temporary:
@@ -179,6 +208,7 @@ def _synthesize_parts_to_wav(
                 progress_start,
                 progress_span,
                 progress_label,
+                generation_control,
             ):
                 if writer is None:
                     writer = sf.SoundFile(
@@ -203,6 +233,8 @@ def _synthesize_parts_to_wav(
                         writer.write(silence)
                 writer.write(samples)
                 has_audio = True
+        if generation_control and generation_control.is_aborted():
+            raise GenerationCancelled(generation_control.keep_partial())
         if writer is not None and has_audio and end_silence_ms:
             silence = silences.get(end_silence_ms)
             if silence is None:
@@ -215,6 +247,14 @@ def _synthesize_parts_to_wav(
             "Writing generated audio",
         )
         return sample_rate, target
+    except GenerationCancelled as error:
+        if writer is not None:
+            writer.close()
+            writer = None
+        if error.keep_partial and has_audio:
+            raise _PartialGenerationCancelled(target, sample_rate) from error
+        target.unlink(missing_ok=True)
+        raise
     except Exception:
         if writer is not None:
             writer.close()
@@ -244,6 +284,7 @@ def _create_audiobook(
     output_format: str = ".m4b",
     progress: ProgressCallback = lambda _value, _message: None,
     synthesize_chunk: Callable[[SynthesisRequest], AudioResult] | None = None,
+    generation_control: GenerationController | None = None,
 ) -> AudiobookResult:
     """Create an audiobook from editable document pages and output chapters."""
     synthesize_chunk = synthesize_chunk or backend.synthesize
@@ -295,6 +336,7 @@ def _create_audiobook(
         part_slots: Counter[int] = Counter()
         try:
             bookmark_number = 0
+            incomplete = False
             for group in groups:
                 page_parts: dict[int, list[str]] = {}
                 for part in group["parts"]:
@@ -329,16 +371,28 @@ def _create_audiobook(
                             1000 if is_bookmark and len(parts) == 1 else 500 if is_bookmark else None,
                         )
                     )
-                sample_rate, temporary_wav = _synthesize_parts_to_wav(
-                    backend,
-                    synthesize_chunk,
-                    parts,
-                    reference_audio,
-                    settings,
-                    progress,
-                    end_silence_ms=2000 if is_bookmark else 500 if has_bookmark_chapters else 0,
-                )
+                try:
+                    _sample_rate, temporary_wav = _synthesize_parts_to_wav(
+                        backend,
+                        synthesize_chunk,
+                        parts,
+                        reference_audio,
+                        settings,
+                        progress,
+                        end_silence_ms=2000 if is_bookmark else 500 if has_bookmark_chapters else 0,
+                        generation_control=generation_control,
+                    )
+                except _PartialGenerationCancelled as error:
+                    temporary_wav = error.path
+                    incomplete = True
+                except GenerationCancelled as error:
+                    if not error.keep_partial or not generated_paths:
+                        raise
+                    incomplete = True
+                    break
                 generated_paths.append((temporary_wav, group["title"]))
+                if incomplete:
+                    break
             if not ffmpeg_path or not ffprobe_path:
                 raise VoxBenchError("FFmpeg and FFprobe are required to create an audiobook.")
             progress(1.0, "Assembling audiobook chapters")
@@ -361,7 +415,7 @@ def _create_audiobook(
                 output_directory,
                 ffmpeg_path,
             )
-            return AudiobookResult(output, document_id, len(sections_to_generate))
+            return AudiobookResult(output, document_id, len(sections_to_generate), incomplete)
         finally:
             for generated_path, _title in generated_paths:
                 try:
@@ -375,17 +429,23 @@ def _create_audiobook(
 
     if not pasted_text or not pasted_text.strip():
         raise VoxBenchError("Upload a document or paste text to begin.")
-    if len(pasted_text) >= STREAM_PASTED_TEXT_AT_CHARS:
-        _sample_rate, temporary_wav = _synthesize_text_to_wav(
-            backend,
-            synthesize_chunk,
-            pasted_text,
-            reference_audio,
-            settings,
-            progress,
-            0.0,
-            1.0,
-        )
+    if len(pasted_text) >= STREAM_PASTED_TEXT_AT_CHARS or generation_control:
+        incomplete = False
+        try:
+            _sample_rate, temporary_wav = _synthesize_text_to_wav(
+                backend,
+                synthesize_chunk,
+                pasted_text,
+                reference_audio,
+                settings,
+                progress,
+                0.0,
+                1.0,
+                generation_control,
+            )
+        except _PartialGenerationCancelled as error:
+            temporary_wav = error.path
+            incomplete = True
         try:
             if output_format == ".m4b":
                 if not ffmpeg_path or not ffprobe_path:
@@ -411,7 +471,7 @@ def _create_audiobook(
                 )
         finally:
             temporary_wav.unlink(missing_ok=True)
-        return AudiobookResult(output, None, 1)
+        return AudiobookResult(output, None, 1, incomplete)
     sample_rate, audio = _synthesize_text(
         backend,
         synthesize_chunk,
@@ -421,6 +481,7 @@ def _create_audiobook(
         progress,
         0.0,
         1.0,
+        generation_control,
     )
     if output_format == ".m4b":
         if not ffmpeg_path or not ffprobe_path:
@@ -472,6 +533,7 @@ def create_audiobook(
     skip_pdf_table_of_contents: bool = True,
     output_format: str = ".m4b",
     progress: ProgressCallback = lambda _value, _message: None,
+    generation_control: GenerationController | None = None,
 ) -> AudiobookResult:
     """Create an audiobook while keeping one reference session for the full batch."""
     with _reference_synthesizer(backend, reference_audio) as synthesize_chunk:
@@ -492,4 +554,5 @@ def create_audiobook(
             output_format=output_format,
             progress=progress,
             synthesize_chunk=synthesize_chunk,
+            generation_control=generation_control,
         )

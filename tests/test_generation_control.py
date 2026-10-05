@@ -29,6 +29,21 @@ class GenerationControllerTests(unittest.TestCase):
         self.assertFalse(controller.pause())
         self.assertFalse(controller.resume())
 
+    def test_abort_unblocks_a_paused_job_and_keeps_its_choice(self):
+        controller = GenerationController()
+        controller.begin()
+        controller.pause()
+        continued = threading.Event()
+
+        worker = threading.Thread(target=lambda: (controller.wait_if_paused(), continued.set()))
+        worker.start()
+        self.assertTrue(controller.abort(True))
+        self.assertTrue(continued.wait(1))
+        self.assertTrue(controller.is_aborted())
+        self.assertTrue(controller.keep_partial())
+        worker.join()
+        controller.finish()
+
 
 if __name__ == "__main__":
     unittest.main()
