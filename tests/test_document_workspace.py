@@ -216,6 +216,7 @@ class DocumentWorkspaceTests(unittest.TestCase):
                 chapter = document_workspace._new_section(
                     "Page 2", "Introduction\nNormal chapter text.", source_page=2
                 )
+                toc["text"] = toc["text"].replace("\n", " ")
                 for section in (toc, chapter):
                     document_workspace.save_section(document_id, section)
                 document_workspace.save_manifest(

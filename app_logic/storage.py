@@ -29,6 +29,12 @@ WINDOWS_RESERVED_NAMES = {
     *(f"COM{number}" for number in range(1, 10)),
     *(f"LPT{number}" for number in range(1, 10)),
 }
+FFMPEG_AUDIO_CODECS = {
+    ".mp3": ["-c:a", "libmp3lame", "-q:a", "2"],
+    ".m4a": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"],
+    ".ogg": ["-c:a", "libvorbis", "-q:a", "5"],
+    ".webm": ["-c:a", "libopus", "-b:a", "128k"],
+}
 
 
 def route_uploaded_file(
@@ -176,12 +182,6 @@ def _encode_with_ffmpeg(
     ffmpeg_path: str,
 ) -> None:
     """Encode mono float audio directly to the selected format."""
-    codec_options = {
-        ".mp3": ["-c:a", "libmp3lame", "-q:a", "2"],
-        ".m4a": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"],
-        ".ogg": ["-c:a", "libvorbis", "-q:a", "5"],
-        ".webm": ["-c:a", "libopus", "-b:a", "128k"],
-    }
     command = [
         ffmpeg_path,
         "-hide_banner",
@@ -196,7 +196,7 @@ def _encode_with_ffmpeg(
         "-i",
         "pipe:0",
         "-vn",
-        *codec_options[extension],
+        *FFMPEG_AUDIO_CODECS[extension],
         "-y",
         str(target),
     ]
@@ -213,6 +213,62 @@ def _encode_with_ffmpeg(
         raise VoxBenchError(f"FFmpeg could not export {extension}: {detail}")
 
 
+def _generated_target(text: str, directory: str | None, output_format: str) -> Path:
+    output_dir = resolve_output_directory(directory)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise VoxBenchError(f"Could not create output folder: {error}") from error
+    filename = generated_audio_filename(text, extension=output_format)
+    target = output_dir / filename
+    counter = 2
+    while target.exists():
+        target = output_dir / f"{Path(filename).stem}_{counter}{output_format}"
+        counter += 1
+    return target
+
+
+def save_generated_wav(
+    source: Path,
+    text: str,
+    directory: str | None,
+    output_format: str,
+    ffmpeg_path: str | None = None,
+) -> Path:
+    """Finalize a streamed WAV without loading it back into memory."""
+    if output_format not in OUTPUT_FORMATS:
+        raise VoxBenchError("Unsupported output format.")
+    if output_format != ".wav" and not ffmpeg_path:
+        raise VoxBenchError("FFmpeg is required for this output format.")
+    target = _generated_target(text, directory, output_format)
+    if output_format == ".wav":
+        source.replace(target)
+        return target
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-vn",
+        *FFMPEG_AUDIO_CODECS[output_format],
+        "-y",
+        str(target),
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        check=False,
+    )
+    if result.returncode:
+        target.unlink(missing_ok=True)
+        detail = result.stderr.decode(errors="replace").strip()
+        raise VoxBenchError(f"FFmpeg could not export {output_format}: {detail}")
+    return target
+
+
 def save_generated_audio(
     audio,
     sample_rate: int,
@@ -226,18 +282,7 @@ def save_generated_audio(
         raise VoxBenchError("Unsupported output format.")
     if output_format != ".wav" and not ffmpeg_path:
         raise VoxBenchError("FFmpeg is required for this output format.")
-    output_dir = resolve_output_directory(directory)
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise VoxBenchError(f"Could not create output folder: {error}") from error
-
-    filename = generated_audio_filename(text, extension=output_format)
-    target = output_dir / filename
-    counter = 2
-    while target.exists():
-        target = output_dir / f"{Path(filename).stem}_{counter}{output_format}"
-        counter += 1
+    target = _generated_target(text, directory, output_format)
 
     audio_data = audio.detach().cpu().float().numpy() if hasattr(audio, "detach") else audio
     try:

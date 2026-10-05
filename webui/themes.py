@@ -84,8 +84,8 @@ body, .q-page, .q-layout, .q-dialog__backdrop {{ background: var(--voxbench-them
 .vox-section-table .q-table__middle {{ max-height: 74vh; overflow-y: auto; }}
 .vox-document-editor .q-field__control {{ height: 74vh; }}
 .vox-document-editor textarea.q-field__native {{ height: calc(74vh - 28px); overflow-y: auto !important; resize: vertical; }}
-.vox-ignore-empty-active {{ color: var(--voxbench-theme-accent) !important; border-color: var(--voxbench-theme-accent) !important; background: color-mix(in srgb, var(--voxbench-theme-accent), transparent 84%) !important; box-shadow: 0 0 12px color-mix(in srgb, var(--voxbench-theme-accent), transparent 62%); }}
 .vox-global-page-counter {{ position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 2; }}
+.vox-source-chapter-controls {{ position: absolute; left: calc(50% + 92px); bottom: 16px; z-index: 2; }}
 .vox-page-navigator {{ padding: 12px 18px; margin: -12px -18px; }}
 .vox-muted {{ color: color-mix(in srgb, var(--voxbench-theme-text), var(--voxbench-theme-background) 38%); }}
 .document-source-frame {{ width: 100%; height: 74vh; border: 1px solid var(--voxbench-theme-outline); border-radius: 6px; background: white; }}

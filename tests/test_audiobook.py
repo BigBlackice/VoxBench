@@ -73,6 +73,35 @@ class AudiobookTests(unittest.TestCase):
         self.assertEqual(result.section_count, 1)
         self.assertTrue(updates)
 
+    def test_long_pasted_text_streams_to_a_temporary_wav(self):
+        backend = FakeBackend()
+        with tempfile.TemporaryDirectory() as directory:
+            temporary_wav = Path(directory) / "streamed.wav"
+            temporary_wav.write_bytes(b"temporary")
+            output = Path(directory) / "output.wav"
+            with (
+                patch.object(audiobook, "_synthesize_text_to_wav", return_value=(10, temporary_wav)) as synthesize,
+                patch.object(audiobook, "save_generated_wav", return_value=output) as save,
+                patch.object(audiobook, "_synthesize_text") as in_memory,
+            ):
+                result = create_audiobook(
+                    backend=backend,
+                    document_path=None,
+                    pasted_text="word " * 2_000,
+                    reference_audio=None,
+                    settings=SynthesisSettings(),
+                    ffmpeg_path=None,
+                    ffprobe_path=None,
+                    output_directory=directory,
+                    output_format=".wav",
+                )
+
+            self.assertEqual(result.output_path, output)
+            synthesize.assert_called_once()
+            save.assert_called_once()
+            in_memory.assert_not_called()
+            self.assertFalse(temporary_wav.exists())
+
     def test_document_wavs_are_deleted_after_assembly(self):
         backend = FakeBackend()
         with tempfile.TemporaryDirectory() as directory:

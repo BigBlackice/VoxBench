@@ -87,6 +87,8 @@ def build_interface(
     reference_workspace = REFERENCE_AUDIO_DIR / uuid.uuid4().hex
     state: dict[str, Any] = {
         "document_id": stored_manifest["id"] if stored_manifest else None,
+        "document_ready": bool(stored_manifest),
+        "document_loading": False,
         "reference_audio": None,
         "reference_name": None,
         "default_reference_audio": str(bundled_reference) if bundled_reference else None,
@@ -141,9 +143,9 @@ def build_interface(
                 )
 
         status = ui.label("").classes("vox-muted")
-        with ui.row().classes("w-full items-center gap-3"):
-            progress_bar = ui.linear_progress(value=0).classes("flex-1")
-            progress_percent = ui.label("0.0%").classes("vox-muted text-sm")
+        with ui.element("div").classes("relative w-full"):
+            progress_bar = ui.linear_progress(value=0, size="20px", show_value=False).classes("w-full")
+            progress_percent = ui.label("0.0%").classes("absolute-center text-xs text-white")
         output_area = ui.column().classes("w-full")
 
         with ui.tabs().classes("w-full") as tabs:
@@ -159,6 +161,8 @@ def build_interface(
                     async def remove_document() -> None:
                         await run.io_bound(clear_document_projects)
                         state["document_id"] = None
+                        state["document_ready"] = False
+                        state["document_loading"] = False
                         state["ignore_empty_pages"] = False
                         document_upload_progress.visible = False
                         document_check.visible = False
@@ -173,18 +177,22 @@ def build_interface(
                         try:
                             data = event.content.read()
                             uploaded = store_upload(event.name, data, suffixes)
-                            status.set_text("Reading document…")
+                            status.set_text("Preparing document…")
                             await run.io_bound(clear_document_projects)
                             state["document_id"] = None
+                            state["document_ready"] = False
+                            state["document_loading"] = True
                             state["ignore_empty_pages"] = False
+                            document_file_label.set_text("Preparing document…")
                             document_id = await run.io_bound(
                                 import_document,
                                 str(uploaded),
                                 event.name,
                             )
-                            state["document_id"] = document_id
                             manifest = await run.io_bound(load_manifest, document_id)
                             page_count = await run.io_bound(document_page_count, document_id)
+                            state["document_id"] = document_id
+                            state["document_ready"] = True
                             document_file_label.set_text(
                                 f"{manifest['source_name']} ({_format_file_size(len(data))}) - "
                                 f"{page_count} Pages."
@@ -198,8 +206,11 @@ def build_interface(
                                 document_file_label.set_text("No document selected.")
                             status.set_text("Document could not be loaded.")
                         finally:
+                            state["document_loading"] = False
                             document_upload_progress.visible = False
                             document_upload.reset()
+                            if not state["busy"]:
+                                create_button.enable()
                             if uploaded:
                                 discard_upload(uploaded)
 
@@ -236,10 +247,14 @@ def build_interface(
                     document_remove.visible = bool(stored_manifest)
 
                     def _begin_document_upload() -> None:
+                        state["document_id"] = None
+                        state["document_ready"] = False
+                        state["document_loading"] = True
                         document_upload_progress.visible = True
                         document_check.visible = False
                         document_remove.visible = False
                         document_file_label.set_text("Uploading document…")
+                        create_button.disable()
 
             with ui.tab_panel(text_tab):
                 with ui.card().classes("vox-card w-full p-5"):
@@ -360,8 +375,17 @@ def build_interface(
         async def create() -> None:
             if state["busy"]:
                 return
-            document_id = state["document_id"] if tabs.value == document_tab.props["name"] else None
-            pasted_text = text_input.value if tabs.value == text_tab.props["name"] else None
+            is_text_mode = tabs.value == text_tab.props["name"]
+            document_id = None if is_text_mode else state["document_id"]
+            pasted_text = text_input.value if is_text_mode else None
+            if not is_text_mode and state["document_loading"]:
+                ui.notify("Document is still being prepared.", type="warning")
+                return
+            if not is_text_mode and not document_id:
+                documents = await run.io_bound(list_documents)
+                if documents:
+                    document_id = documents[0][1]
+                    state["document_id"] = document_id
             if not document_id and not (pasted_text or "").strip():
                 ui.notify("Upload a document or paste text to begin.", type="warning")
                 return
@@ -571,26 +595,6 @@ def build_interface(
         ):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label("Advanced document editing").classes("vox-primary-heading text-xl font-medium")
-                with ui.row().classes("items-center gap-3") as source_chapter_controls:
-                    pdf_chapter_toggle = ui.checkbox(
-                        "Use source chapters for output",
-                        value=state["use_pdf_bookmarks"],
-                    )
-                    skip_pdf_toc = ui.checkbox(
-                        "Skip printed table of contents",
-                        value=state["skip_pdf_table_of_contents"],
-                    )
-                    pdf_chapter_depth = ui.select(
-                        {
-                            0: "Top level only",
-                            1: "1 level deep",
-                            2: "2 levels deep",
-                            3: "3 levels deep",
-                            4: "4 levels deep",
-                        },
-                        value=state["pdf_bookmark_depth"],
-                        label="Chapter depth",
-                    ).classes("w-44")
                 _button("Close", advanced_dialog.close, icon="close")
             with ui.row().classes("w-full no-wrap gap-4"):
                 with ui.column().classes("basis-[13%] min-w-[150px] gap-3"):
@@ -610,7 +614,6 @@ def build_interface(
                     editor = ui.textarea().classes("vox-document-editor w-full").props("outlined autogrow")
                     with ui.row().classes("w-full gap-2"):
                         restore_button = _button("Restore original")
-                        ignore_empty_button = _button("Ignore empty", icon="block")
                         create_selected_button = _button("Create", icon="auto_awesome")
                     with ui.element("div").classes("vox-page-fixes w-full"):
                         ui.label("Apply before generating selected pages").classes("vox-muted text-sm")
@@ -620,6 +623,9 @@ def build_interface(
                             fix_hyphenation = ui.checkbox("Repair hyphenation", value=True)
                             fix_lines = ui.checkbox("Join broken lines", value=True)
                             fix_whitespace = ui.checkbox("Normalize whitespace", value=True)
+                            ignore_empty_checkbox = ui.checkbox(
+                                "Ignore empty", value=state["ignore_empty_pages"]
+                            )
                 with ui.column().classes("basis-[52%] min-w-0"):
                     ui.label("Source document").classes("vox-primary-heading text-lg font-medium")
                     # The workspace sanitizes imported EPUB/Docx HTML before it is stored.
@@ -630,6 +636,26 @@ def build_interface(
                     with ui.row().classes("items-center gap-2"):
                         page_input = ui.input(placeholder="Page").classes("w-20").props("type=number min=1")
                         page_total = ui.label("/ 0").classes("vox-muted")
+            with ui.row().classes("vox-source-chapter-controls items-center gap-3 no-wrap") as source_chapter_controls:
+                pdf_chapter_toggle = ui.checkbox(
+                    "Use source chapters for output",
+                    value=state["use_pdf_bookmarks"],
+                )
+                skip_pdf_toc = ui.checkbox(
+                    "Skip printed table of contents",
+                    value=state["skip_pdf_table_of_contents"],
+                )
+                pdf_chapter_depth = ui.select(
+                    {
+                        0: "Top level only",
+                        1: "1 level deep",
+                        2: "2 levels deep",
+                        3: "3 levels deep",
+                        4: "4 levels deep",
+                    },
+                    value=state["pdf_bookmark_depth"],
+                    label="Chapter depth",
+                ).classes("w-44")
 
             async def save_current_editor() -> None:
                 document_id = state["document_id"]
@@ -642,12 +668,6 @@ def build_interface(
                         state.get("editor_section_title", ""),
                         editor.value or "",
                     )
-
-            def set_ignore_button(ignored: bool) -> None:
-                ignore_empty_button.classes(
-                    add="vox-ignore-empty-active" if ignored else None,
-                    remove=None if ignored else "vox-ignore-empty-active",
-                )
 
             async def load_selected(
                 document_id: str,
@@ -735,14 +755,13 @@ def build_interface(
                     editor.update()
                     ui.notify("Original text restored.")
 
-            async def toggle_ignore_empty_pages() -> None:
+            async def set_ignore_empty_pages(event) -> None:
                 document_id = state["document_id"]
                 if not document_id:
                     return
-                ignored = not state["ignore_empty_pages"]
+                ignored = bool(event.value)
                 changed = await run.io_bound(set_empty_sections_ignored, document_id, ignored)
                 state["ignore_empty_pages"] = ignored
-                set_ignore_button(ignored)
                 ui.notify(
                     f"Ignoring {changed} empty page(s) during creation."
                     if ignored
@@ -844,7 +863,7 @@ def build_interface(
                 js_handler="(event) => { event.preventDefault(); emit(event.deltaY); }",
             )
             restore_button.on_click(restore_selected)
-            ignore_empty_button.on_click(toggle_ignore_empty_pages)
+            ignore_empty_checkbox.on_value_change(set_ignore_empty_pages)
             create_selected_button.on_click(create_selected_pages)
             advanced_dialog.on("hide", save_current_editor)
 
@@ -862,7 +881,7 @@ def build_interface(
             section_table.update()
             selected_count.set_text("0 selected")
             page_total.set_text(f"/ {len(rows)}")
-            set_ignore_button(state["ignore_empty_pages"])
+            ignore_empty_checkbox.set_value(state["ignore_empty_pages"])
             source_chapter_controls.set_visibility(manifest.get("source_type") in {".pdf", ".epub"})
             skip_pdf_toc.set_visibility(manifest.get("source_type") == ".pdf")
             state["selected_section_id"] = None

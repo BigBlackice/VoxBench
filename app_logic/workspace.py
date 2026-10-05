@@ -456,7 +456,7 @@ def table_of_contents_section_ids(
         section = load_section(document_id, section_id)
         if int(section.get("source_page") or 0) >= first_chapter_page:
             continue
-        text = section["text"]
+        text = section.get("original_text") or section["text"]
         leader_lines = sum(
             bool(re.search(r"(?:\.\s*){3,}\d+\s*$", line))
             for line in text.splitlines()

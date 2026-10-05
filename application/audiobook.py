@@ -21,12 +21,13 @@ from app_logic.workspace import (
     table_of_contents_section_ids,
 )
 from webui.errors import VoxBenchError
-from app_logic.storage import save_generated_audio
+from app_logic.storage import save_generated_audio, save_generated_wav
 from app_logic.text_processing import split_text
 
 
 ProgressCallback = Callable[[float, str], None]
 SUPPORTED_AUDIOBOOK_FORMATS = (".m4b", ".mp3", ".wav", ".m4a", ".ogg", ".webm")
+STREAM_PASTED_TEXT_AT_CHARS = 10_000
 
 
 @dataclass(frozen=True)
@@ -374,6 +375,43 @@ def _create_audiobook(
 
     if not pasted_text or not pasted_text.strip():
         raise VoxBenchError("Upload a document or paste text to begin.")
+    if len(pasted_text) >= STREAM_PASTED_TEXT_AT_CHARS:
+        _sample_rate, temporary_wav = _synthesize_text_to_wav(
+            backend,
+            synthesize_chunk,
+            pasted_text,
+            reference_audio,
+            settings,
+            progress,
+            0.0,
+            1.0,
+        )
+        try:
+            if output_format == ".m4b":
+                if not ffmpeg_path or not ffprobe_path:
+                    raise VoxBenchError("FFmpeg and FFprobe are required for M4B output.")
+                progress(1.0, "Writing M4B chapter metadata")
+                output = assemble_chapters(
+                    [create_batch_item(str(temporary_wav), ffprobe_path)],
+                    "Silence",
+                    0,
+                    0.0,
+                    False,
+                    ".m4b",
+                    output_directory,
+                    ffmpeg_path,
+                )
+            else:
+                output = save_generated_wav(
+                    temporary_wav,
+                    pasted_text,
+                    output_directory,
+                    output_format,
+                    ffmpeg_path,
+                )
+        finally:
+            temporary_wav.unlink(missing_ok=True)
+        return AudiobookResult(output, None, 1)
     sample_rate, audio = _synthesize_text(
         backend,
         synthesize_chunk,
