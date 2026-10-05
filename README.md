@@ -10,9 +10,6 @@ CPU, and returns generated audio to the application for local processing.
 VoxBench is an independent project and is not affiliated with or endorsed by
 Resemble AI.
 
-> **Release status:** VoxBench v0.2.0 beta. Core workflows are functional, but
-> interfaces, configuration, and stored document formats may change before v1.0.
-
 ## Requirements
 
 - Python 3.11
