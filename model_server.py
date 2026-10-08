@@ -14,6 +14,7 @@ import soundfile as sf
 import uvicorn
 
 from inference.contract import API_VERSION, SynthesisRequest
+from app_logic.logging_setup import build_log_config
 from webui.config import MODEL_CACHE_DIR
 
 
@@ -150,7 +151,12 @@ def main() -> None:
             "VOXBENCH_MODEL_API_KEY is required when the model service is "
             "bound beyond the local machine."
         )
-    uvicorn.run(model_app, host=host, port=port)
+    uvicorn.run(
+        model_app,
+        host=host,
+        port=port,
+        log_config=build_log_config(Path(__file__).resolve().parent, "model"),
+    )
 
 
 if __name__ == "__main__":

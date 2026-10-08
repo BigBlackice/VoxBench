@@ -6,6 +6,7 @@ inference backend is only asked to turn one prepared text chunk into audio.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,9 @@ from app_logic.storage import (
     default_reference_sample,
     replace_uploaded_reference_audio,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _button(label: str, callback=None, *, icon: str | None = None) -> ui.button:
@@ -506,6 +510,7 @@ def build_interface(
                 ui.notify("Generation aborted.", type="warning")
                 status.set_text("Generation aborted.")
             except (InferenceError, OSError, VoxBenchError) as error:
+                logger.exception("Audiobook generation failed")
                 ui.notify(str(error), type="negative")
                 status.set_text("Generation failed.")
             finally:
@@ -928,6 +933,7 @@ def build_interface(
                     ui.notify("Generation aborted.", type="warning")
                     status.set_text("Selected-page generation aborted.")
                 except (InferenceError, OSError, VoxBenchError) as error:
+                    logger.exception("Selected-page audiobook generation failed")
                     ui.notify(str(error), type="negative")
                     status.set_text("Selected-page generation failed.")
                 finally:

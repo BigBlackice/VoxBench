@@ -19,6 +19,7 @@ from app_logic.auth import (
     load_auth_settings,
     login_page,
 )
+from app_logic.logging_setup import build_log_config
 from webui.config import MODEL_CACHE_DIR, OUTPUTS_DIR, PROJECT_DIR
 from webui.app_config import ModelConnection, ModelConnectionSettings
 from app_logic.workspace import document_source_path
@@ -110,6 +111,7 @@ def main() -> None:
         show=False,
         reload=False,
         loop=loop,
+        log_config=build_log_config(PROJECT_DIR, "app"),
     )
 
 

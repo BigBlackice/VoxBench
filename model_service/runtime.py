@@ -1,5 +1,8 @@
+import os
+import platform
 import random
 import secrets
+import sys
 import tempfile
 import threading
 import time
@@ -8,6 +11,17 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+
+def _configure_mps_environment() -> None:
+    """Enable Apple Metal optimizations before PyTorch is imported."""
+    if sys.platform == "darwin" and platform.machine().lower() == "arm64":
+        os.environ.setdefault("PYTORCH_MPS_FAST_MATH", "1")
+        os.environ.setdefault("PYTORCH_MPS_PREFER_METAL", "1")
+
+
+_configure_mps_environment()
+
 import torch
 from chatterbox.tts_turbo import ChatterboxTurboTTS
 
@@ -43,6 +57,8 @@ class ChatterboxRuntime:
         self._model: ChatterboxTurboTTS | None = None
         self._load_lock = threading.Lock()
         self._generation_lock = threading.Lock()
+        self._default_conditionals: Any = None
+        self._prepared_reference_key: tuple[str, bool] | None = None
         self._reference_directory = tempfile.TemporaryDirectory(prefix="voxbench_model_")
         self._reference_sessions: dict[str, _ReferenceSession] = {}
         self._reference_lock = threading.Lock()
@@ -79,18 +95,36 @@ class ChatterboxRuntime:
                         device=self.device,
                         nano=True,
                     )
+                    self._default_conditionals = self._model.conds
         return self._model
+
+    def _prepare_reference_conditionals(
+        self,
+        model: ChatterboxTurboTTS,
+        reference_audio: str | None,
+        norm_loudness: bool,
+    ) -> None:
+        if not reference_audio:
+            model.conds = self._default_conditionals
+            self._prepared_reference_key = None
+            return
+        key = (str(Path(reference_audio).resolve()), norm_loudness)
+        if key != self._prepared_reference_key:
+            model.prepare_conditionals(reference_audio, norm_loudness=norm_loudness)
+            self._prepared_reference_key = key
 
     def synthesize(self, request: SynthesisRequest) -> AudioResult:
         model = self._get_model()
         with self._generation_lock, torch.inference_mode():
+            self._prepare_reference_conditionals(
+                model, request.audio_prompt_path, request.norm_loudness
+            )
             if request.seed:
                 torch.manual_seed(request.seed)
                 random.seed(request.seed)
                 np.random.seed(request.seed)
             wav = model.generate(
                 request.text,
-                audio_prompt_path=request.audio_prompt_path,
                 temperature=request.temperature,
                 min_p=request.min_p,
                 top_p=request.top_p,
@@ -162,4 +196,5 @@ class ChatterboxRuntime:
             for session in self._reference_sessions.values():
                 session.path.unlink(missing_ok=True)
             self._reference_sessions.clear()
+        self._prepared_reference_key = None
         self._reference_directory.cleanup()

@@ -106,6 +106,10 @@ document is processed one prepared page at a time and assembled into a
 chaptered M4B by default. The completed file can be played or downloaded
 directly from the page. Generated output is excluded from Git.
 
+The application and model service write rotating logs to `logs/app.log` and
+`logs/model.log`. Each log retains up to 20 MB across its current file and
+three backups.
+
 Use the **Settings** button in the header to select the output type and adjust
 seed, sampling values, repetition penalty, chunk length, pause length, and
 loudness normalization. M4B is selected by default when FFmpeg and FFprobe are
