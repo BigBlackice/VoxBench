@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import soundfile as sf
+
 from webui.errors import VoxBenchError
 
 from webui.config import AUDIO_FILE_EXTENSIONS, OUTPUTS_DIR, PROJECT_DIR
@@ -555,6 +557,130 @@ def assemble_chapters(
         target.unlink(missing_ok=True)
         detail = result.stderr.decode(errors="replace").strip()
         raise VoxBenchError(f"Could not assemble chapters: {detail}")
+    return target
+
+
+def assemble_document_chapters(
+    batch: list[dict[str, Any]],
+    silence_ms: int,
+    output_format: str,
+    output_directory: str | None,
+    ffmpeg_path: str,
+) -> Path:
+    """Assemble generated document WAVs without opening every file at once."""
+    if not batch:
+        raise VoxBenchError("Select at least one audio file.")
+    if output_format not in ASSEMBLY_FORMATS:
+        raise VoxBenchError("Unsupported assembly format.")
+
+    for item in batch:
+        validate_audio_path(item["path"])
+    chapters, _ = chapter_timeline(batch, "Silence", silence_ms)
+    chapter_titles = [
+        str(item.get("chapter_title") or f"Chapter {index}")
+        for index, item in enumerate(batch, start=1)
+    ]
+    output_dir = resolve_output_directory(output_directory)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = output_dir / f"{timestamp}_assembled_chapters{output_format}"
+    counter = 2
+    while target.exists():
+        target = output_dir / f"{timestamp}_assembled_chapters_{counter}{output_format}"
+        counter += 1
+
+    try:
+        with _temporary_assembly_directory(batch) as temporary_directory:
+            staging_dir = Path(temporary_directory)
+            staged_inputs = _stage_audio_inputs(batch, staging_dir)
+            try:
+                sample_rate = sf.info(staged_inputs[0]).samplerate
+            except RuntimeError as error:
+                raise VoxBenchError("Could not inspect generated audio.") from error
+            entries = []
+            silence_path = staging_dir / "silence.wav"
+            if silence_ms:
+                silence_result = run_command(
+                    [
+                        ffmpeg_path,
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"anullsrc=r={sample_rate}:cl=mono",
+                        "-t",
+                        f"{max(0, silence_ms) / 1000:.6f}",
+                        "-c:a",
+                        "pcm_s16le",
+                        "-y",
+                        silence_path.name,
+                    ],
+                    cwd=staging_dir,
+                )
+                if silence_result.returncode:
+                    detail = silence_result.stderr.decode(errors="replace").strip()
+                    raise VoxBenchError(f"Could not prepare chapter silence: {detail}")
+            for index, path in enumerate(staged_inputs):
+                entries.append(f"file '{path.name}'")
+                if silence_ms and index < len(staged_inputs) - 1:
+                    entries.append(f"file '{silence_path.name}'")
+            list_path = staging_dir / "inputs.txt"
+            list_path.write_text("\n".join(entries) + "\n", encoding="utf-8")
+            joined_path = staging_dir / "joined.wav"
+            joined_result = run_command(
+                [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    list_path.name,
+                    "-c:a",
+                    "pcm_s16le",
+                    "-y",
+                    joined_path.name,
+                ],
+                cwd=staging_dir,
+            )
+            if joined_result.returncode:
+                detail = joined_result.stderr.decode(errors="replace").strip()
+                raise VoxBenchError(f"Could not join generated audio: {detail}")
+            metadata_path = staging_dir / "chapters.ffmeta"
+            metadata_path.write_text(ffmetadata_text(chapters, chapter_titles), encoding="utf-8")
+            result = run_command(
+                [
+                    ffmpeg_path,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    joined_path.name,
+                    "-f",
+                    "ffmetadata",
+                    "-i",
+                    metadata_path.name,
+                    "-map",
+                    "0:a",
+                    "-map_metadata",
+                    "1",
+                    *_output_codec(output_format),
+                    "-y",
+                    str(target),
+                ],
+                cwd=staging_dir,
+            )
+            if result.returncode:
+                detail = result.stderr.decode(errors="replace").strip()
+                raise VoxBenchError(f"Could not assemble chapters: {detail}")
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     return target
 
 

@@ -10,6 +10,7 @@ from application import audiobook
 from application.audiobook import SynthesisSettings, _synthesize_parts_to_wav, _synthesize_text_to_wav, create_audiobook
 from app_logic.generation_control import GenerationController
 from inference.contract import AudioResult
+from webui.errors import VoxBenchError
 
 
 class FakeBackend:
@@ -153,7 +154,7 @@ class AudiobookTests(unittest.TestCase):
                 patch.object(audiobook, "_synthesize_parts_to_wav", return_value=(10, generated)),
                 patch.object(audiobook, "create_batch_item", return_value={}),
                 patch.object(
-                    audiobook, "assemble_chapters", return_value=Path(directory) / "book.m4b"
+                    audiobook, "assemble_document_chapters", return_value=Path(directory) / "book.m4b"
                 ) as assemble,
                 patch.object(audiobook, "clear_document_audio_paths"),
             ):
@@ -168,7 +169,46 @@ class AudiobookTests(unittest.TestCase):
                     output_directory=directory,
                     document_id="test_document",
                 )
-            self.assertEqual(assemble.call_args.args[2], 500)
+            self.assertEqual(assemble.call_args.args[1], 500)
+            self.assertFalse(generated.exists())
+
+    def test_document_wavs_are_retained_when_assembly_fails(self):
+        backend = FakeBackend()
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory) / "section.wav"
+            generated.write_bytes(b"temporary")
+            with (
+                patch.object(audiobook, "prepare_entire_document", return_value=["section"]),
+                patch.object(
+                    audiobook,
+                    "document_generation_groups",
+                    return_value=[{
+                        "title": "Page 1",
+                        "is_bookmark": False,
+                        "parts": [{"page_index": 1, "text": "One."}],
+                    }],
+                ),
+                patch.object(audiobook, "table_of_contents_section_ids", return_value=[]),
+                patch.object(audiobook, "_synthesize_parts_to_wav", return_value=(10, generated)),
+                patch.object(audiobook, "create_batch_item", return_value={}),
+                patch.object(
+                    audiobook, "assemble_document_chapters", side_effect=VoxBenchError("FFmpeg failed")
+                ),
+            ):
+                with self.assertRaisesRegex(VoxBenchError, "FFmpeg failed"):
+                    create_audiobook(
+                        backend=backend,
+                        document_path=None,
+                        pasted_text=None,
+                        reference_audio=None,
+                        settings=SynthesisSettings(),
+                        ffmpeg_path="ffmpeg",
+                        ffprobe_path="ffprobe",
+                        output_directory=directory,
+                        document_id="test_document",
+                    )
+            retained = list((Path(directory) / "incomplete").glob("*.wav"))
+            self.assertEqual(len(retained), 1)
             self.assertFalse(generated.exists())
 
     def test_document_page_progress_uses_page_labels(self):
@@ -231,7 +271,7 @@ class AudiobookTests(unittest.TestCase):
                 patch.object(audiobook, "_synthesize_parts_to_wav", return_value=(10, generated)) as synthesize,
                 patch.object(audiobook, "create_batch_item", return_value={}),
                 patch.object(
-                    audiobook, "assemble_chapters", return_value=Path(directory) / "book.m4b"
+                    audiobook, "assemble_document_chapters", return_value=Path(directory) / "book.m4b"
                 ) as assemble,
                 patch.object(audiobook, "clear_document_audio_paths"),
             ):
@@ -251,7 +291,7 @@ class AudiobookTests(unittest.TestCase):
             self.assertEqual(parts[0][0], "Chapter 1: Opening")
             self.assertEqual(parts[1][4], 1000)
             self.assertEqual(synthesize.call_args.kwargs["end_silence_ms"], 2000)
-            self.assertEqual(assemble.call_args.args[2], 0)
+            self.assertEqual(assemble.call_args.args[1], 0)
 
 
 if __name__ == "__main__":

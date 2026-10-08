@@ -3,10 +3,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app_logic.chapter_assembly import (
     assemble_chapters,
+    assemble_document_chapters,
     chapter_timeline,
     create_batch_item,
     ffmetadata_text,
@@ -149,6 +151,32 @@ class ChapterAssemblyTests(unittest.TestCase):
             self.assertIn("-filter_complex_script", command)
             self.assertLess(len(subprocess.list2cmdline(command)), 10_000)
 
+    def test_document_assembly_uses_one_concat_list_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            source.write_bytes(b"test")
+            batch = [
+                {
+                    "path": str(source),
+                    "duration_ms": 1000,
+                    "chapter_title": f"Page {index}",
+                    "trim_start_ms": 0,
+                    "trim_end_ms": 0,
+                }
+                for index in range(300)
+            ]
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+            with (
+                patch("app_logic.chapter_assembly.run_command", return_value=completed) as run,
+                patch("app_logic.chapter_assembly.sf.info", return_value=SimpleNamespace(samplerate=24000)),
+            ):
+                assemble_document_chapters(batch, 500, ".m4b", str(root), "ffmpeg")
+
+            join_command = run.call_args_list[1].args[0]
+            self.assertEqual(join_command.count("-i"), 1)
+            self.assertIn("inputs.txt", join_command)
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "FFmpeg and FFprobe are required",
@@ -181,12 +209,9 @@ class ChapterAssemblyTests(unittest.TestCase):
                 create_batch_item(str(source), ffprobe, title)
                 for source, title in zip(sources, ("Opening", "Closing"))
             ]
-            target = assemble_chapters(
+            target = assemble_document_chapters(
                 batch,
-                "Silence",
                 100,
-                0,
-                False,
                 ".m4b",
                 str(root),
                 ffmpeg,

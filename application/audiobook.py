@@ -1,7 +1,9 @@
 from contextlib import contextmanager
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+import shutil
 from tempfile import NamedTemporaryFile
 from typing import Callable, Iterator
 
@@ -11,7 +13,7 @@ import soundfile as sf
 from inference.contract import AudioResult, InferenceBackend, SynthesisRequest
 from app_logic.generation_control import GenerationController
 from app_logic.audio_processing import join_audio_chunks
-from app_logic.chapter_assembly import assemble_chapters, create_batch_item
+from app_logic.chapter_assembly import assemble_chapters, assemble_document_chapters, create_batch_item
 from app_logic.workspace import (
     clear_document_audio_paths,
     document_generation_groups,
@@ -22,7 +24,7 @@ from app_logic.workspace import (
     table_of_contents_section_ids,
 )
 from webui.errors import VoxBenchError
-from app_logic.storage import save_generated_audio, save_generated_wav
+from app_logic.storage import resolve_output_directory, save_generated_audio, save_generated_wav
 from app_logic.text_processing import split_text
 
 
@@ -65,6 +67,20 @@ class _PartialGenerationCancelled(GenerationCancelled):
         super().__init__(True)
         self.path = path
         self.sample_rate = sample_rate
+
+
+def _retain_incomplete_wavs(
+    generated_paths: list[tuple[Path, str]], output_directory: str
+) -> None:
+    recovery_directory = resolve_output_directory(output_directory) / "incomplete"
+    recovery_directory.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for index, (path, _title) in enumerate(generated_paths, start=1):
+        target = recovery_directory / f"{timestamp}_{index:04d}.wav"
+        try:
+            shutil.move(str(path), target)
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -327,6 +343,8 @@ def _create_audiobook(
             bookmark_depth=pdf_bookmark_depth,
         )
         generated_paths: list[tuple[Path, str]] = []
+        completed = False
+        retain_incomplete = True
         has_bookmark_chapters = any(group.get("is_bookmark") for group in groups)
         page_counts = Counter(
             page_index
@@ -387,6 +405,7 @@ def _create_audiobook(
                     incomplete = True
                 except GenerationCancelled as error:
                     if not error.keep_partial or not generated_paths:
+                        retain_incomplete = error.keep_partial
                         raise
                     incomplete = True
                     break
@@ -405,27 +424,28 @@ def _create_audiobook(
                         title or f"Chapter {index}",
                     )
                 )
-            output = assemble_chapters(
+            output = assemble_document_chapters(
                 batch,
-                "Silence",
                 0 if has_bookmark_chapters else 500,
-                0.0,
-                False,
                 output_format,
                 output_directory,
                 ffmpeg_path,
             )
+            completed = True
             return AudiobookResult(output, document_id, len(sections_to_generate), incomplete)
         finally:
-            for generated_path, _title in generated_paths:
+            if completed or not retain_incomplete:
+                for generated_path, _title in generated_paths:
+                    try:
+                        generated_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 try:
-                    generated_path.unlink(missing_ok=True)
-                except OSError:
+                    clear_document_audio_paths(document_id, sections_to_generate)
+                except (OSError, VoxBenchError):
                     pass
-            try:
-                clear_document_audio_paths(document_id, sections_to_generate)
-            except (OSError, VoxBenchError):
-                pass
+            else:
+                _retain_incomplete_wavs(generated_paths, output_directory)
 
     if not pasted_text or not pasted_text.strip():
         raise VoxBenchError("Upload a document or paste text to begin.")
