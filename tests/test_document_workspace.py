@@ -238,6 +238,40 @@ class DocumentWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(skipped, [toc["id"]])
 
+    def test_detects_strong_epub_table_of_contents_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            documents = Path(directory) / "documents"
+            with patch.object(document_workspace, "DOCUMENTS_DIR", documents):
+                document_id = "epub_toc"
+                (documents / document_id).mkdir(parents=True)
+                contents = document_workspace._new_section(
+                    "Contents",
+                    "Opening . . . 1\nGetting started . . . 5\nAdvanced use . . . 9",
+                    chapter_title="Contents",
+                    chapter_level=0,
+                )
+                chapters = [
+                    document_workspace._new_section(
+                        title, "Chapter text.", chapter_title=title, chapter_level=0
+                    )
+                    for title in ("Opening", "Getting started", "Advanced use")
+                ]
+                for section in [contents, *chapters]:
+                    document_workspace.save_section(document_id, section)
+                document_workspace.save_manifest(
+                    {
+                        "id": document_id,
+                        "source_type": ".epub",
+                        "sections": [contents["id"], *(section["id"] for section in chapters)],
+                    }
+                )
+
+                skipped = document_workspace.table_of_contents_section_ids(
+                    document_id, [contents["id"], *(section["id"] for section in chapters)]
+                )
+
+        self.assertEqual(skipped, [contents["id"]])
+
     def test_epub_navigation_anchors_split_one_spine_item(self):
         chapter = EpubChapter(
             "book.xhtml",
@@ -258,6 +292,19 @@ class DocumentWorkspaceTests(unittest.TestCase):
         self.assertEqual([section["chapter_level"] for section in sections], [0, 1])
         self.assertIn("One.", sections[0]["text"])
         self.assertNotIn("Two.", sections[0]["text"])
+
+    def test_epub_navigation_anchors_preserve_utf16_content(self):
+        content = "<html><body><h1 id='first'>First</h1><p>One.</p><h1 id='second'>Second</h1><p>Two.</p></body></html>".encode("utf-16")
+        navigation = [
+            EpubNavigation("First", 0, "book.xhtml", "first"),
+            EpubNavigation("Second", 0, "book.xhtml", "second"),
+        ]
+
+        parts = document_workspace._split_epub_navigation(content, navigation)
+
+        self.assertEqual(len(parts), 3)  # The markup before the first anchor is retained.
+        self.assertIn("First", parts[1][1].decode("utf-8"))
+        self.assertIn("Second", parts[2][1].decode("utf-8"))
 
     def test_unmatched_epub_anchor_keeps_preceding_content(self):
         chapter = EpubChapter(

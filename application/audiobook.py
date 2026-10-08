@@ -207,6 +207,9 @@ def _synthesize_parts_to_wav(
     generation_control: GenerationController | None = None,
 ) -> tuple[int, Path]:
     """Stream ordered text parts into one WAV without retaining audio chunks."""
+    parts = [part for part in parts if part[0].strip()]
+    if not parts:
+        raise VoxBenchError("There is no text to synthesize.")
     with NamedTemporaryFile(prefix="voxbench_section_", suffix=".wav", delete=False) as temporary:
         target = Path(temporary.name)
     sample_rate = backend.sample_rate

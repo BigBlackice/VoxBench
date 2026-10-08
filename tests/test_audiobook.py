@@ -228,6 +228,25 @@ class AudiobookTests(unittest.TestCase):
         finally:
             target.unlink(missing_ok=True)
 
+    def test_blank_document_parts_are_skipped(self):
+        backend = FakeBackend()
+        sample_rate, target = _synthesize_parts_to_wav(
+            backend,
+            backend.synthesize,
+            [
+                ("Chapter 1: Opening", 0.0, 0.0, None, None),
+                ("   ", 0.0, 1.0, "Generating page 1 of 1", 1000),
+            ],
+            None,
+            SynthesisSettings(),
+            lambda _value, _message: None,
+        )
+        try:
+            self.assertEqual(sample_rate, 10)
+            self.assertEqual(len(backend.requests), 1)
+        finally:
+            target.unlink(missing_ok=True)
+
     def test_bookmark_chapter_pauses_are_written_to_its_wav(self):
         backend = FakeBackend()
         sample_rate, target = _synthesize_parts_to_wav(

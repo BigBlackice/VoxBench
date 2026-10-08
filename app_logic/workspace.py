@@ -193,7 +193,8 @@ def _split_epub_navigation(
     if not entries:
         return [(None, content)]
 
-    source = content.decode("utf-8", errors="replace")
+    # BeautifulSoup honors an EPUB document's declared encoding (including UTF-16).
+    source = BeautifulSoup(content, "html.parser").decode()
     boundaries: list[tuple[int, EpubNavigation]] = []
     for entry in entries:
         if not entry.fragment:
@@ -439,22 +440,34 @@ def table_of_contents_section_ids(
     document_id: str,
     section_ids: list[str],
 ) -> list[str]:
-    """Return selected PDF pages that strongly match a printed contents page."""
+    """Return selected PDF or EPUB sections that strongly match a printed contents page."""
     manifest = load_manifest(document_id)
-    if manifest.get("source_type") != ".pdf":
+    source_type = manifest.get("source_type")
+    if source_type not in {".pdf", ".epub"}:
         return []
-    bookmarks = _manifest_pdf_bookmarks(manifest)
-    if not bookmarks:
+    if source_type == ".pdf":
+        bookmarks = _manifest_pdf_bookmarks(manifest)
+        titles = [bookmark.title for bookmark in bookmarks]
+    else:
+        bookmarks = []
+        titles = [
+            str(load_section(document_id, section_id).get("chapter_title") or "")
+            for section_id in manifest["sections"]
+        ]
+    patterns = [pattern for title in titles if (pattern := _bookmark_pattern(title))]
+    if not patterns:
         return []
-    top_level = min(item.level for item in bookmarks)
-    first_chapter_page = min(item.page for item in bookmarks if item.level == top_level)
+    first_chapter_page = None
+    if bookmarks:
+        top_level = min(item.level for item in bookmarks)
+        first_chapter_page = min(item.page for item in bookmarks if item.level == top_level)
     selected = set(section_ids)
     skipped = []
     for section_id in manifest["sections"]:
         if section_id not in selected:
             continue
         section = load_section(document_id, section_id)
-        if int(section.get("source_page") or 0) >= first_chapter_page:
+        if first_chapter_page is not None and int(section.get("source_page") or 0) >= first_chapter_page:
             continue
         text = section.get("original_text") or section["text"]
         leader_lines = sum(
@@ -463,7 +476,7 @@ def table_of_contents_section_ids(
         )
         title_matches = sum(
             bool(pattern and pattern.search(_bookmark_match_text(text)))
-            for pattern in (_bookmark_pattern(item.title) for item in bookmarks)
+            for pattern in patterns
         )
         if leader_lines >= 2 and title_matches >= 3:
             skipped.append(section_id)
