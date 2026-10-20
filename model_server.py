@@ -38,7 +38,8 @@ class SynthesisPayload(BaseModel):
 
 
 MODEL_API_KEY = os.getenv("VOXBENCH_MODEL_API_KEY", "")
-runtime = ChatterboxRuntime()
+MODEL_NAME = os.getenv("VOXBENCH_MODEL", "nano").strip().lower()
+runtime = ChatterboxRuntime(MODEL_NAME)
 
 
 @asynccontextmanager
@@ -151,6 +152,7 @@ def main() -> None:
             "VOXBENCH_MODEL_API_KEY is required when the model service is "
             "bound beyond the local machine."
         )
+    runtime.preload()
     uvicorn.run(
         model_app,
         host=host,

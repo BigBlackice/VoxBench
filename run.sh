@@ -13,4 +13,4 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 "$VENV_PYTHON" -m pip install --disable-pip-version-check -r requirements.txt
-exec "$VENV_PYTHON" launcher.py
+exec "$VENV_PYTHON" launcher.py "$@"

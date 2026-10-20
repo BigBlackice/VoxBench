@@ -2,6 +2,9 @@
 setlocal
 cd /d "%~dp0"
 set "VENV_PYTHON=%~dp0.venv-model\Scripts\python.exe"
+set "VOXBENCH_MODEL=%~1"
+if "%VOXBENCH_MODEL%"=="" set "VOXBENCH_MODEL=nano"
+if /I not "%VOXBENCH_MODEL%"=="nano" if /I not "%VOXBENCH_MODEL%"=="turbo" goto :usage
 
 if not exist "%VENV_PYTHON%" (
     echo Creating model-only Python 3.11 environment...
@@ -25,5 +28,10 @@ exit /b 1
 
 :dependency_error
 echo ERROR: Dependency installation failed.
+pause
+exit /b 1
+
+:usage
+echo Usage: run-model.bat [nano^|turbo]
 pause
 exit /b 1

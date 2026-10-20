@@ -30,6 +30,7 @@ from inference.contract import AudioResult, SynthesisRequest
 
 REFERENCE_SESSION_IDLE_SECONDS = 30 * 60
 MAX_REFERENCE_SESSIONS = 16
+SUPPORTED_MODELS = {"nano", "turbo"}
 
 
 @dataclass
@@ -50,9 +51,12 @@ def detect_device() -> tuple[str, str]:
 
 
 class ChatterboxRuntime:
-    """Lazy, serialized access to one Chatterbox Nano model."""
+    """Lazy, serialized access to one Chatterbox Nano or Turbo model."""
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str = "nano") -> None:
+        self.model_name = model_name.lower()
+        if self.model_name not in SUPPORTED_MODELS:
+            raise ValueError(f"Unsupported Chatterbox model: {model_name}")
         self.device, self.device_label = detect_device()
         self._model: ChatterboxTurboTTS | None = None
         self._load_lock = threading.Lock()
@@ -66,7 +70,7 @@ class ChatterboxRuntime:
     def capabilities(self) -> dict[str, Any]:
         return {
             "backend": "chatterbox",
-            "model": "chatterbox-nano",
+            "model": f"chatterbox-{self.model_name}",
             "device": self.device,
             "device_label": self.device_label,
             "sample_rate": 24_000,
@@ -88,15 +92,19 @@ class ChatterboxRuntime:
             with self._load_lock:
                 if self._model is None:
                     print(
-                        "Loading Chatterbox-Nano with "
+                        f"Loading Chatterbox-{self.model_name.title()} with "
                         f"{self.device_label} ({self.device})..."
                     )
                     self._model = ChatterboxTurboTTS.from_pretrained(
                         device=self.device,
-                        nano=True,
+                        nano=self.model_name == "nano",
                     )
                     self._default_conditionals = self._model.conds
         return self._model
+
+    def preload(self) -> None:
+        """Download and load the selected model before accepting requests."""
+        self._get_model()
 
     def _prepare_reference_conditionals(
         self,

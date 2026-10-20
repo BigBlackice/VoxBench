@@ -60,7 +60,7 @@ class AudiobookTests(unittest.TestCase):
                 document_path=None,
                 pasted_text="One. Two. Three.",
                 reference_audio=None,
-                settings=SynthesisSettings(max_chunk_chars=8, pause_ms=100),
+                settings=SynthesisSettings(max_chunk_chars=8, pause_ms=100, tempo=1.0),
                 ffmpeg_path=None,
                 ffprobe_path=None,
                 output_directory=directory,

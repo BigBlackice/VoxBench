@@ -24,6 +24,15 @@ class ModelServerTests(unittest.TestCase):
         self.assertEqual(capabilities["model"], "chatterbox-nano")
         self.assertEqual(capabilities["api_version"], "1")
 
+    def test_main_preloads_the_model_before_starting_the_server(self):
+        events = []
+        with (
+            patch.object(model_server.runtime, "preload", side_effect=lambda: events.append("preload")),
+            patch.object(model_server.uvicorn, "run", side_effect=lambda *_args, **_kwargs: events.append("run")),
+        ):
+            model_server.main()
+        self.assertEqual(events, ["preload", "run"])
+
     def test_synthesis_returns_wav_and_passes_only_prepared_input(self):
         result = AudioResult(24_000, np.zeros(240, dtype=np.float32))
         with patch.object(model_server.runtime, "synthesize", return_value=result) as run:

@@ -460,7 +460,7 @@ def build_interface(
             if not document_id and not (pasted_text or "").strip():
                 ui.notify("Upload a document or paste text to begin.", type="warning")
                 return
-            if state["output_format"] != ".wav" and not ffmpeg_path:
+            if (state["output_format"] != ".wav" or state["settings"].tempo != 1.0) and not ffmpeg_path:
                 ui.notify("FFmpeg is required for the selected output format.", type="negative")
                 return
             if state["output_format"] == ".m4b" and not ffprobe_path:
@@ -571,6 +571,9 @@ def build_interface(
                     repetition_penalty = ui.number("Repetition penalty", value=1.2, min=0.5, max=3, step=0.05).classes("flex-1")
                     pause_ms = ui.number("Pause between chunks (ms)", value=250, min=0, max=5_000, precision=0).classes("flex-1")
                     norm_loudness = ui.switch("Normalize loudness", value=True).classes("flex-1")
+                tempo = ui.number(
+                    "Narration speed", value=state["settings"].tempo, min=0.5, max=2, step=0.05
+                ).classes("w-full")
 
             def save_settings() -> None:
                 state["settings"] = SynthesisSettings(
@@ -583,6 +586,7 @@ def build_interface(
                     norm_loudness=bool(norm_loudness.value),
                     max_chunk_chars=int(max_chunk_chars.value),
                     pause_ms=int(pause_ms.value),
+                    tempo=float(tempo.value),
                 )
                 state["output_format"] = output_format.value
                 ui.notify("Generation settings saved.", type="positive")

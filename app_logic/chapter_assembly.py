@@ -456,16 +456,21 @@ def assemble_chapters(
     output_format: str,
     output_directory: str | None,
     ffmpeg_path: str,
+    tempo: float = 1.0,
 ) -> Path:
     """Assemble chapters directly into a final file with chapter metadata."""
     if not batch:
         raise VoxBenchError("Select at least one audio file.")
     if output_format not in ASSEMBLY_FORMATS:
         raise VoxBenchError("Unsupported assembly format.")
+    if not 0.5 <= tempo <= 2.0:
+        raise VoxBenchError("Narration speed must be between 0.5 and 2.0.")
 
     for item in batch:
         validate_audio_path(item["path"])
     chapters, _ = chapter_timeline(batch, transition_mode, transition_ms)
+    if tempo != 1.0:
+        chapters = [(round(start / tempo), round(end / tempo)) for start, end in chapters]
     chapter_titles = [
         str(item.get("chapter_title") or f"Chapter {index}")
         for index, item in enumerate(batch, start=1)
@@ -528,6 +533,9 @@ def assemble_chapters(
                 f"{''.join(concat_inputs)}concat=n={len(concat_inputs)}"
                 f":v=0:a=1[{final_label}]"
             )
+        if tempo != 1.0:
+            filter_parts.append(f"[{final_label}]atempo={tempo:.6f}[tempo]")
+            final_label = "tempo"
 
         metadata_path = staging_dir / "chapters.ffmeta"
         filter_path = staging_dir / "filters.txt"
@@ -566,16 +574,21 @@ def assemble_document_chapters(
     output_format: str,
     output_directory: str | None,
     ffmpeg_path: str,
+    tempo: float = 1.0,
 ) -> Path:
     """Assemble generated document WAVs without opening every file at once."""
     if not batch:
         raise VoxBenchError("Select at least one audio file.")
     if output_format not in ASSEMBLY_FORMATS:
         raise VoxBenchError("Unsupported assembly format.")
+    if not 0.5 <= tempo <= 2.0:
+        raise VoxBenchError("Narration speed must be between 0.5 and 2.0.")
 
     for item in batch:
         validate_audio_path(item["path"])
     chapters, _ = chapter_timeline(batch, "Silence", silence_ms)
+    if tempo != 1.0:
+        chapters = [(round(start / tempo), round(end / tempo)) for start, end in chapters]
     chapter_titles = [
         str(item.get("chapter_title") or f"Chapter {index}")
         for index, item in enumerate(batch, start=1)
@@ -669,6 +682,8 @@ def assemble_document_chapters(
                     "0:a",
                     "-map_metadata",
                     "1",
+                    "-filter:a",
+                    f"atempo={tempo:.6f}",
                     *_output_codec(output_format),
                     "-y",
                     str(target),

@@ -44,6 +44,7 @@ class SynthesisSettings:
     norm_loudness: bool = True
     max_chunk_chars: int = 300
     pause_ms: int = 250
+    tempo: float = 0.9
 
 
 @dataclass(frozen=True)
@@ -433,6 +434,7 @@ def _create_audiobook(
                 output_format,
                 output_directory,
                 ffmpeg_path,
+                tempo=settings.tempo,
             )
             completed = True
             return AudiobookResult(output, document_id, len(sections_to_generate), incomplete)
@@ -483,6 +485,7 @@ def _create_audiobook(
                     ".m4b",
                     output_directory,
                     ffmpeg_path,
+                    tempo=settings.tempo,
                 )
             else:
                 output = save_generated_wav(
@@ -491,6 +494,7 @@ def _create_audiobook(
                     output_directory,
                     output_format,
                     ffmpeg_path,
+                    tempo=settings.tempo,
                 )
         finally:
             temporary_wav.unlink(missing_ok=True)
@@ -524,6 +528,7 @@ def _create_audiobook(
                 ".m4b",
                 output_directory,
                 ffmpeg_path,
+                tempo=settings.tempo,
             )
         finally:
             temporary_wav.unlink(missing_ok=True)
@@ -535,6 +540,7 @@ def _create_audiobook(
             output_directory,
             output_format,
             ffmpeg_path,
+            tempo=settings.tempo,
         )
     return AudiobookResult(output, None, 1)
 

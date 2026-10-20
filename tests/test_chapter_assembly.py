@@ -177,6 +177,41 @@ class ChapterAssemblyTests(unittest.TestCase):
             self.assertEqual(join_command.count("-i"), 1)
             self.assertIn("inputs.txt", join_command)
 
+    def test_document_assembly_applies_tempo_and_scales_chapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.wav"
+            source.write_bytes(b"test")
+            captured = {}
+
+            def run(command, *, cwd=None):
+                if "chapters.ffmeta" in command:
+                    captured["metadata"] = (Path(cwd) / "chapters.ffmeta").read_text()
+                return subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+
+            with (
+                patch("app_logic.chapter_assembly.run_command", side_effect=run) as command,
+                patch("app_logic.chapter_assembly.sf.info", return_value=SimpleNamespace(samplerate=24000)),
+            ):
+                assemble_document_chapters(
+                    [{
+                        "path": str(source),
+                        "duration_ms": 1000,
+                        "chapter_title": "One",
+                        "trim_start_ms": 0,
+                        "trim_end_ms": 0,
+                    }],
+                    0,
+                    ".m4b",
+                    str(root),
+                    "ffmpeg",
+                    tempo=0.9,
+                )
+
+            final_command = command.call_args_list[-1].args[0]
+            self.assertIn("atempo=0.900000", final_command)
+            self.assertIn("END=1111", captured["metadata"])
+
     @unittest.skipUnless(
         shutil.which("ffmpeg") and shutil.which("ffprobe"),
         "FFmpeg and FFprobe are required",

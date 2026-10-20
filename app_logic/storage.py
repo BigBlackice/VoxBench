@@ -30,6 +30,7 @@ WINDOWS_RESERVED_NAMES = {
     *(f"LPT{number}" for number in range(1, 10)),
 }
 FFMPEG_AUDIO_CODECS = {
+    ".wav": ["-c:a", "pcm_s16le"],
     ".mp3": ["-c:a", "libmp3lame", "-q:a", "2"],
     ".m4a": ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"],
     ".ogg": ["-c:a", "libvorbis", "-q:a", "5"],
@@ -180,6 +181,7 @@ def _encode_with_ffmpeg(
     sample_rate: int,
     extension: str,
     ffmpeg_path: str,
+    tempo: float = 1.0,
 ) -> None:
     """Encode mono float audio directly to the selected format."""
     command = [
@@ -196,6 +198,8 @@ def _encode_with_ffmpeg(
         "-i",
         "pipe:0",
         "-vn",
+        "-af",
+        f"atempo={tempo:.6f}",
         *FFMPEG_AUDIO_CODECS[extension],
         "-y",
         str(target),
@@ -234,14 +238,17 @@ def save_generated_wav(
     directory: str | None,
     output_format: str,
     ffmpeg_path: str | None = None,
+    tempo: float = 1.0,
 ) -> Path:
     """Finalize a streamed WAV without loading it back into memory."""
     if output_format not in OUTPUT_FORMATS:
         raise VoxBenchError("Unsupported output format.")
-    if output_format != ".wav" and not ffmpeg_path:
+    if not 0.5 <= tempo <= 2.0:
+        raise VoxBenchError("Narration speed must be between 0.5 and 2.0.")
+    if (output_format != ".wav" or tempo != 1.0) and not ffmpeg_path:
         raise VoxBenchError("FFmpeg is required for this output format.")
     target = _generated_target(text, directory, output_format)
-    if output_format == ".wav":
+    if output_format == ".wav" and tempo == 1.0:
         source.replace(target)
         return target
     command = [
@@ -252,6 +259,8 @@ def save_generated_wav(
         "-i",
         str(source),
         "-vn",
+        "-af",
+        f"atempo={tempo:.6f}",
         *FFMPEG_AUDIO_CODECS[output_format],
         "-y",
         str(target),
@@ -276,17 +285,20 @@ def save_generated_audio(
     directory: str | None,
     output_format: str = ".wav",
     ffmpeg_path: str | None = None,
+    tempo: float = 1.0,
 ) -> Path:
     """Save generated audio in the selected format without retaining intermediates."""
     if output_format not in OUTPUT_FORMATS:
         raise VoxBenchError("Unsupported output format.")
-    if output_format != ".wav" and not ffmpeg_path:
+    if not 0.5 <= tempo <= 2.0:
+        raise VoxBenchError("Narration speed must be between 0.5 and 2.0.")
+    if (output_format != ".wav" or tempo != 1.0) and not ffmpeg_path:
         raise VoxBenchError("FFmpeg is required for this output format.")
     target = _generated_target(text, directory, output_format)
 
     audio_data = audio.detach().cpu().float().numpy() if hasattr(audio, "detach") else audio
     try:
-        if output_format == ".wav":
+        if output_format == ".wav" and tempo == 1.0:
             sf.write(target, audio_data, sample_rate, format="WAV", subtype="PCM_16")
         else:
             _encode_with_ffmpeg(
@@ -295,6 +307,7 @@ def save_generated_audio(
                 sample_rate,
                 output_format,
                 ffmpeg_path,
+                tempo,
             )
     except (OSError, RuntimeError) as error:
         raise VoxBenchError(f"Could not save generated audio: {error}") from error

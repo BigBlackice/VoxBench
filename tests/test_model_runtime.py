@@ -5,6 +5,14 @@ from model_service.runtime import ChatterboxRuntime
 
 
 class ModelRuntimeTests(unittest.TestCase):
+    def test_turbo_capabilities_do_not_load_the_model(self):
+        runtime = ChatterboxRuntime("turbo")
+        try:
+            self.assertEqual(runtime.capabilities()["model"], "chatterbox-turbo")
+            self.assertIsNone(runtime._model)
+        finally:
+            runtime.close()
+
     def test_reuses_prepared_conditionals_for_the_same_reference(self):
         class Model:
             conds = "default"

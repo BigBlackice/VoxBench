@@ -1,5 +1,6 @@
 """Launch the app and model service as separate, automatically connected processes."""
 
+import argparse
 import os
 import subprocess
 import sys
@@ -21,12 +22,16 @@ def _stop(process: subprocess.Popen) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Launch VoxBench locally.")
+    parser.add_argument("model", nargs="?", choices=("nano", "turbo"), default="nano")
+    arguments = parser.parse_args()
     project_dir = Path(__file__).resolve().parent
     environment = {
         **os.environ,
         "VOXBENCH_MODEL_HOST": "127.0.0.1",
         "VOXBENCH_MODEL_PORT": "7861",
         "VOXBENCH_MODEL_API_KEY": "",
+        "VOXBENCH_MODEL": arguments.model,
         "VOXBENCH_SHARED_LOCAL_MODE": "1",
     }
     model_url = "http://127.0.0.1:7861"

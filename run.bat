@@ -13,7 +13,7 @@ echo Installing shared application and model dependencies...
 "%VENV_PYTHON%" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto :dependency_error
 
-"%VENV_PYTHON%" launcher.py
+"%VENV_PYTHON%" launcher.py %*
 set "APP_EXIT=%ERRORLEVEL%"
 if not "%APP_EXIT%"=="0" pause
 exit /b %APP_EXIT%
