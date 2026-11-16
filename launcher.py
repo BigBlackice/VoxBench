@@ -44,8 +44,7 @@ def main() -> None:
     app: subprocess.Popen | None = None
     try:
         client = VoxBenchModelClient(model_url, timeout=2)
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
+        while True:
             if model.poll() is not None:
                 raise SystemExit(
                     f"The model service exited during startup with code {model.returncode}."
@@ -55,8 +54,6 @@ def main() -> None:
                 break
             except InferenceError:
                 time.sleep(0.25)
-        else:
-            raise SystemExit("The model service did not become ready within 120 seconds.")
 
         print(f"Model service ready at {model_url}")
         app = subprocess.Popen(
